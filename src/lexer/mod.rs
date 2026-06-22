@@ -58,12 +58,12 @@ pub enum Token {
     #[token("/")]
     Slash,
 
-    #[regex("[0-9]+", integer_callback)]
-    #[regex("0x[0-9A-Fa-f]+", integer_callback_hex)]
+    #[regex("[0-9]+", |lex| integer_callback(lex, 10))]
+    #[regex("0x[0-9A-Fa-f]+", |lex| integer_callback(lex, 16))]
     IntegerLiteral(i64),
 
-    #[regex(r"[0-9]+\.[0-9]+(e[+-]?[0-9]+)?(f64)?")]
-    FloatLiteral,
+    #[regex(r"[0-9]+\.[0-9]+(e[+-]?[0-9]+)?(f64)?", float_callback)]
+    FloatLiteral(f64),
 
     #[regex(r"'[\x{00}-\x{FF}]'", |lex| char_callback_basic(lex) as u8)]
     #[regex(r#"'\\[tnr"'\\{}<>&#~]'"#, |lex| char_callback_escaped(lex) as u8)]
@@ -107,30 +107,27 @@ fn newline_callback(lex: &mut Lexer) -> Skip {
     Skip
 }
 
-fn map_parse_int_err(lex: &Lexer, err: std::num::ParseIntError) -> LexerError {
-    use std::num::IntErrorKind;
-    match err.kind() {
-        IntErrorKind::PosOverflow => LexerError::InvalidToken("Number is too large".to_string()),
-        IntErrorKind::NegOverflow => LexerError::InvalidToken("Number is too small".to_string()),
-        _ => LexerError::InvalidToken(lex.slice().to_string()),
-    }
+fn integer_callback(lex: &Lexer, radix: u32) -> Result<i64, LexerError> {
+    i64::from_str_radix(&lex.slice()[2..], radix)
+        .map_err(|_| LexerError::InvalidToken("Invalid integer literal".to_string()))
 }
 
-fn integer_callback(lex: &mut Lexer) -> Result<i64, LexerError> {
-    lex.slice()
-        .parse()
-        .map_err(|err| map_parse_int_err(&lex, err))
+fn float_callback(lex: &Lexer) -> Result<f64, LexerError> {
+    let src = lex.slice();
+    let src = if src.ends_with("f64") {
+        &src[..src.len() - 3]
+    } else {
+        &src
+    };
+    src.parse::<f64>()
+        .map_err(|_| LexerError::InvalidToken("Invalid float literal".to_string()))
 }
 
-fn integer_callback_hex(lex: &mut Lexer) -> Result<i64, LexerError> {
-    i64::from_str_radix(&lex.slice()[2..], 16).map_err(|err| map_parse_int_err(&lex, err))
-}
-
-fn char_callback_basic(lex: &mut Lexer) -> char {
+fn char_callback_basic(lex: &Lexer) -> char {
     lex.slice().chars().nth(1).unwrap()
 }
 
-fn char_callback_escaped(lex: &mut Lexer) -> char {
+fn char_callback_escaped(lex: &Lexer) -> char {
     match lex.slice().chars().nth(2).unwrap() {
         't' => '\u{0009}',
         'n' => '\u{000A}',
@@ -149,7 +146,7 @@ fn char_callback_escaped(lex: &mut Lexer) -> char {
     }
 }
 
-fn char_callback_hex(lex: &mut Lexer) -> Result<char, LexerError> {
+fn char_callback_hex(lex: &Lexer) -> Result<char, LexerError> {
     let value = u32::from_str_radix(&lex.slice()[2..], 16).unwrap();
     std::char::from_u32(value).ok_or_else(|| LexerError::InvalidToken(lex.slice().to_string()))
 }

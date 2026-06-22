@@ -249,13 +249,7 @@ impl<'source> Parser<'source> {
     fn parse_literal_expr(&mut self) -> ParseResult<LiteralExpr> {
         let expr = match self.next()? {
             Token::IntegerLiteral(value) => LiteralExpr::Integer(value),
-            Token::FloatLiteral => {
-                let mut src = self.lexer.slice();
-                if src.ends_with("f64") {
-                    src = &src[..src.len() - 3]
-                }
-                LiteralExpr::Float(src.parse().unwrap())
-            }
+            Token::FloatLiteral(value) => LiteralExpr::Float(value),
             Token::CharLiteral(c) => LiteralExpr::Char(c),
             Token::Char32Literal(c) => LiteralExpr::Char32(c),
             Token::True => LiteralExpr::Bool(true),
