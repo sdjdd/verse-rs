@@ -114,7 +114,7 @@ impl<'source> Parser<'source> {
 
     pub fn parse(&mut self) -> ParseResult<Program> {
         let mut expressions = Vec::new();
-        while !matches!(self.peek(), Ok(Token::EOF)) {
+        while !matches!(self.peek()?, Token::EOF) {
             expressions.push(self.parse_expression()?);
         }
         Ok(Program { expressions })
@@ -248,19 +248,7 @@ impl<'source> Parser<'source> {
 
     fn parse_literal_expr(&mut self) -> ParseResult<LiteralExpr> {
         let expr = match self.next()? {
-            Token::Integer => {
-                let src = self.lexer.slice();
-                let value = if src.len() > 2 {
-                    // TODO: check overflow
-                    match &src[0..2] {
-                        "0x" => i64::from_str_radix(&src[2..], 16).unwrap(),
-                        _ => i64::from_str_radix(src, 10).unwrap(),
-                    }
-                } else {
-                    src.parse::<i64>().unwrap()
-                };
-                LiteralExpr::Integer(value)
-            }
+            Token::IntegerLiteral(value) => LiteralExpr::Integer(value),
             Token::FloatLiteral => {
                 let mut src = self.lexer.slice();
                 if src.ends_with("f64") {

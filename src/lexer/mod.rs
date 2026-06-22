@@ -58,9 +58,9 @@ pub enum Token {
     #[token("/")]
     Slash,
 
-    #[regex("[0-9]+")]
-    #[regex("0x[0-9a-fA-F]+")]
-    Integer,
+    #[regex("[0-9]+", integer_callback)]
+    #[regex("0x[0-9A-Fa-f]+", integer_callback_hex)]
+    IntegerLiteral(i64),
 
     #[regex(r"[0-9]+\.[0-9]+(e[+-]?[0-9]+)?(f64)?")]
     FloatLiteral,
@@ -105,6 +105,25 @@ fn whitespace_callback(lex: &mut Lexer) -> Skip {
 fn newline_callback(lex: &mut Lexer) -> Skip {
     lex.extras.indent = 0;
     Skip
+}
+
+fn map_parse_int_err(lex: &Lexer, err: std::num::ParseIntError) -> LexerError {
+    use std::num::IntErrorKind;
+    match err.kind() {
+        IntErrorKind::PosOverflow => LexerError::InvalidToken("Number is too large".to_string()),
+        IntErrorKind::NegOverflow => LexerError::InvalidToken("Number is too small".to_string()),
+        _ => LexerError::InvalidToken(lex.slice().to_string()),
+    }
+}
+
+fn integer_callback(lex: &mut Lexer) -> Result<i64, LexerError> {
+    lex.slice()
+        .parse()
+        .map_err(|err| map_parse_int_err(&lex, err))
+}
+
+fn integer_callback_hex(lex: &mut Lexer) -> Result<i64, LexerError> {
+    i64::from_str_radix(&lex.slice()[2..], 16).map_err(|err| map_parse_int_err(&lex, err))
 }
 
 fn char_callback_basic(lex: &mut Lexer) -> char {
