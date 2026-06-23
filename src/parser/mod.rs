@@ -222,8 +222,8 @@ impl<'source> Parser<'source> {
         let expr = match self.next()? {
             Token::IntegerLiteral => self.parse_integer_literal()?,
             Token::FloatLiteral => self.parse_float_literal()?,
-            Token::CharLiteral(c) => LiteralExpr::Char(c),
-            Token::Char32Literal(c) => LiteralExpr::Char32(c),
+            Token::CharLiteral => self.parse_char_literal()?,
+            Token::Char32Literal => self.parse_char32_literal()?,
             Token::True => LiteralExpr::Bool(true),
             Token::False => LiteralExpr::Bool(false),
             Token::StringLiteral => LiteralExpr::String(
@@ -254,6 +254,33 @@ impl<'source> Parser<'source> {
         src.parse::<f64>()
             .map(|v| LiteralExpr::Float(v))
             .map_err(|_| ParseError::InvalidToken("Invalid float literal".to_string()))
+    }
+
+    fn parse_char_literal(&mut self) -> ParseResult<LiteralExpr> {
+        let mut src = self.lexer.slice();
+        if src.starts_with("0o") {
+            return Ok(LiteralExpr::Char(
+                u8::from_str_radix(&src[2..], 16).unwrap(),
+            ));
+        }
+        src = &src[1..src.len() - 1];
+        let ch = if src.starts_with("\\") {
+            escape_char(src.chars().nth(1).unwrap()) as u8
+        } else {
+            src.bytes().nth(0).unwrap()
+        };
+        Ok(LiteralExpr::Char(ch))
+    }
+
+    fn parse_char32_literal(&mut self) -> ParseResult<LiteralExpr> {
+        let src = self.lexer.slice();
+        let ch = if src.starts_with("0u") {
+            let value = u32::from_str_radix(&src[2..], 16).unwrap();
+            std::char::from_u32(value).unwrap()
+        } else {
+            src.chars().nth(1).unwrap()
+        };
+        Ok(LiteralExpr::Char32(ch))
     }
 
     fn parse_template_expression(&mut self) -> ParseResult<Expression> {
@@ -293,26 +320,30 @@ impl<'source> Parser<'source> {
                 continue;
             }
             if escaped {
-                ch = match ch {
-                    't' => '\u{0009}',
-                    'n' => '\u{000A}',
-                    'r' => '\u{000D}',
-                    '"' => '\u{0022}',
-                    '\'' => '\u{0027}',
-                    '\\' => '\u{005C}',
-                    '{' => '\u{007B}',
-                    '}' => '\u{007D}',
-                    '<' => '\u{003C}',
-                    '>' => '\u{003E}',
-                    '&' => '\u{0026}',
-                    '#' => '\u{0023}',
-                    '~' => '\u{007E}',
-                    _ => ch,
-                };
+                ch = escape_char(ch);
                 escaped = false;
             }
             chars.push(ch);
         }
         chars.iter().collect()
+    }
+}
+
+fn escape_char(ch: char) -> char {
+    match ch {
+        't' => '\u{0009}',
+        'n' => '\u{000A}',
+        'r' => '\u{000D}',
+        '"' => '\u{0022}',
+        '\'' => '\u{0027}',
+        '\\' => '\u{005C}',
+        '{' => '\u{007B}',
+        '}' => '\u{007D}',
+        '<' => '\u{003C}',
+        '>' => '\u{003E}',
+        '&' => '\u{0026}',
+        '#' => '\u{0023}',
+        '~' => '\u{007E}',
+        _ => ch,
     }
 }
