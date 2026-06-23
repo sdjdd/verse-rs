@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     ast::{
         AssignmentExpr, BinaryExpr, BinaryOperator, CallExpr, Expression, IdentifierExpr, IfExpr,
-        LiteralExpr,
+        LiteralExpr, TemplateElement, TemplateExpression,
     },
     lexer::{Lexer, Token},
     parser::ParseError::SyntaxError,
@@ -28,15 +28,9 @@ pub enum ParseError {
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-struct ParserState<'source> {
-    lexer: Lexer<'source>,
-    peek_token: Option<Token>,
-}
-
 pub struct Parser<'source> {
     lexer: Lexer<'source>,
     peek_token: Option<Token>,
-    states: Vec<ParserState<'source>>,
 }
 
 impl<'source> Parser<'source> {
@@ -44,7 +38,6 @@ impl<'source> Parser<'source> {
         Self {
             lexer,
             peek_token: None,
-            states: vec![],
         }
     }
 
@@ -92,24 +85,6 @@ impl<'source> Parser<'source> {
             }
             Err(_) => false,
         }
-    }
-
-    fn push_state(&mut self) {
-        self.states.push(ParserState {
-            lexer: self.lexer.clone(),
-            peek_token: self.peek_token,
-        });
-    }
-
-    fn pop_state(&mut self) {
-        if let Some(state) = self.states.pop() {
-            self.lexer = state.lexer;
-            self.peek_token = state.peek_token;
-        }
-    }
-
-    fn drop_state(&mut self) {
-        self.states.pop();
     }
 
     pub fn parse(&mut self) -> ParseResult<Program> {
@@ -224,20 +199,17 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
-        if self.consume_if(Token::LParen) {
-            let expr = self.parse_expression()?;
-            self.expect(Token::RParen)?;
-            return Ok(expr);
-        }
-
-        self.push_state();
-        if let Ok(expr) = self.parse_identifier_expr() {
-            self.drop_state();
-            return Ok(Expression::Id(expr));
-        }
-        self.pop_state();
-
-        Ok(Expression::Literal(self.parse_literal_expr()?))
+        let expr = match self.peek()? {
+            Token::Ident => Expression::Id(self.parse_identifier_expr()?),
+            Token::TemplateHead => self.parse_template_expression()?,
+            Token::LParen => {
+                let expr = self.parse_expression()?;
+                self.expect(Token::RParen)?;
+                expr
+            }
+            _ => self.parse_literal_expr()?,
+        };
+        Ok(expr)
     }
 
     fn parse_identifier_expr(&mut self) -> ParseResult<IdentifierExpr> {
@@ -246,7 +218,7 @@ impl<'source> Parser<'source> {
         Ok(IdentifierExpr { name })
     }
 
-    fn parse_literal_expr(&mut self) -> ParseResult<LiteralExpr> {
+    fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
         let expr = match self.next()? {
             Token::IntegerLiteral(value) => LiteralExpr::Integer(value),
             Token::FloatLiteral(value) => LiteralExpr::Float(value),
@@ -254,17 +226,46 @@ impl<'source> Parser<'source> {
             Token::Char32Literal(c) => LiteralExpr::Char32(c),
             Token::True => LiteralExpr::Bool(true),
             Token::False => LiteralExpr::Bool(false),
-            Token::StringLiteral => self.parse_string_literal()?,
+            Token::StringLiteral => LiteralExpr::String(
+                self.escape_string_literal(&self.lexer.slice()[1..self.lexer.slice().len() - 1]),
+            ),
             token => return Err(ParseError::UnexpectedToken(token)),
         };
-        Ok(expr)
+        Ok(Expression::Literal(expr))
     }
 
-    fn parse_string_literal(&mut self) -> ParseResult<LiteralExpr> {
+    fn parse_template_expression(&mut self) -> ParseResult<Expression> {
+        self.expect(Token::TemplateHead)?;
+        let mut elements = Vec::new();
         let src = self.lexer.slice();
+        elements.push(TemplateElement::Raw(
+            self.escape_string_literal(&src[1..src.len() - 1]),
+        ));
+        loop {
+            match self.peek()? {
+                Token::TemplateMiddle => {
+                    self.next().unwrap();
+                    let src = self.lexer.slice();
+                    elements.push(TemplateElement::Raw(
+                        self.escape_string_literal(&src[1..src.len() - 1]),
+                    ));
+                }
+                Token::TemplateTail => break,
+                _ => elements.push(TemplateElement::Expr(self.parse_expression()?)),
+            }
+        }
+        self.expect(Token::TemplateTail)?;
+        let src = self.lexer.slice();
+        elements.push(TemplateElement::Raw(
+            self.escape_string_literal(&src[1..src.len() - 1]),
+        ));
+        Ok(Expression::Template(TemplateExpression { elements }))
+    }
+
+    fn escape_string_literal(&mut self, src: &str) -> String {
         let mut chars = Vec::new();
         let mut escaped = false;
-        for mut ch in src[1..src.len() - 1].chars() {
+        for mut ch in src.chars() {
             if ch == '\\' {
                 escaped = true;
                 continue;
@@ -290,6 +291,6 @@ impl<'source> Parser<'source> {
             }
             chars.push(ch);
         }
-        Ok(LiteralExpr::String(chars.iter().collect()))
+        chars.iter().collect()
     }
 }

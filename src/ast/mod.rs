@@ -6,6 +6,7 @@ pub enum Expression {
     Call(CallExpr),
     Binary(BinaryExpr),
     If(IfExpr),
+    Template(TemplateExpression),
 }
 
 #[derive(Debug, Clone)]
@@ -55,4 +56,15 @@ pub struct IfExpr {
     pub test: Box<Expression>,
     pub consequent: Box<Expression>,
     pub alternate: Option<Box<Expression>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TemplateElement {
+    Raw(String),
+    Expr(Expression),
+}
+
+#[derive(Debug, Clone)]
+pub struct TemplateExpression {
+    pub elements: Vec<TemplateElement>,
 }

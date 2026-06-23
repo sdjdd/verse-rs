@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::ast::{
     AssignmentExpr, BinaryExpr, BinaryOperator, CallExpr, Expression, IdentifierExpr, IfExpr,
-    LiteralExpr,
+    LiteralExpr, TemplateElement, TemplateExpression,
 };
 
 #[derive(Clone, Debug)]
@@ -63,6 +63,7 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
         Expression::Id(expr) => eval_identifier(expr, ctx),
         Expression::Binary(expr) => eval_binary(expr, ctx),
         Expression::If(expr) => eval_if(expr, ctx),
+        Expression::Template(expr) => eval_template(expr, ctx),
     }
 }
 
@@ -150,4 +151,16 @@ fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
             "Expected bool in if condition".to_string(),
         ))
     }
+}
+
+fn eval_template(expr: &TemplateExpression, ctx: &mut EvalContext) -> EvalResult {
+    let mut strings = Vec::new();
+    strings.reserve(expr.elements.len());
+    for elem in expr.elements.iter() {
+        match elem {
+            TemplateElement::Raw(str) => strings.push(str.clone()),
+            TemplateElement::Expr(expr) => strings.push(eval(expr, ctx)?.to_string()),
+        }
+    }
+    Ok(Value::String(strings.concat()))
 }

@@ -27,6 +27,8 @@ impl LexerError {
 // #[logos(skip r"[ \t\n\f]")]
 #[logos(extras = LexerState)]
 #[logos(error(LexerError, LexerError::from_lexer))]
+#[logos(subpattern escape = r#"[tnr"'\\{}<>&#~]"#)]
+#[logos(subpattern string = r#"([^(?&escape)]|\\.)*"#)]
 pub enum Token {
     #[regex(r"[ \t]+", whitespace_callback)]
     Whitespace,
@@ -74,8 +76,17 @@ pub enum Token {
     #[regex(r"0u[0-9A-Fa-f]{5}", char_callback_hex)]
     Char32Literal(char),
 
-    #[regex(r#""([^"]|\\.)*""#)]
+    #[regex(r#""(?&string)""#)]
     StringLiteral,
+
+    #[regex(r#""(?&string)\{"#)]
+    TemplateHead,
+
+    #[regex(r#"\}(?&string)\{"#)]
+    TemplateMiddle,
+
+    #[regex(r#"\}(?&string)""#)]
+    TemplateTail,
 
     #[token("true")]
     True,
@@ -111,7 +122,8 @@ fn newline_callback(lex: &mut Lexer) -> Skip {
 }
 
 fn integer_callback(lex: &Lexer, radix: u32) -> Result<i64, LexerError> {
-    i64::from_str_radix(&lex.slice()[2..], radix)
+    let start = if radix == 10 { 0 } else { 16 };
+    i64::from_str_radix(&lex.slice()[start..], radix)
         .map_err(|_| LexerError::InvalidToken("Invalid integer literal".to_string()))
 }
 
