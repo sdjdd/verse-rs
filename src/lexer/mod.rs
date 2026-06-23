@@ -64,8 +64,8 @@ pub enum Token {
     #[regex("0x[0-9A-Fa-f]+")]
     IntegerLiteral,
 
-    #[regex(r"[0-9]+\.[0-9]+(e[+-]?[0-9]+)?(f64)?", float_callback)]
-    FloatLiteral(f64),
+    #[regex(r"[0-9]+\.[0-9]+(e[+-]?[0-9]+)?(f64)?")]
+    FloatLiteral,
 
     #[regex(r"'[\x{00}-\x{FF}]'", |lex| char_callback_basic(lex) as u8)]
     #[regex(r#"'\\[tnr"'\\{}<>&#~]'"#, |lex| char_callback_escaped(lex) as u8)]
@@ -119,17 +119,6 @@ fn whitespace_callback(lex: &mut Lexer) -> Skip {
 fn newline_callback(lex: &mut Lexer) -> Skip {
     lex.extras.indent = 0;
     Skip
-}
-
-fn float_callback(lex: &Lexer) -> Result<f64, LexerError> {
-    let src = lex.slice();
-    let src = if src.ends_with("f64") {
-        &src[..src.len() - 3]
-    } else {
-        &src
-    };
-    src.parse::<f64>()
-        .map_err(|_| LexerError::InvalidToken("Invalid float literal".to_string()))
 }
 
 fn char_callback_basic(lex: &Lexer) -> char {

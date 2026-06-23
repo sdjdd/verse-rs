@@ -221,7 +221,7 @@ impl<'source> Parser<'source> {
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
         let expr = match self.next()? {
             Token::IntegerLiteral => self.parse_integer_literal()?,
-            Token::FloatLiteral(value) => LiteralExpr::Float(value),
+            Token::FloatLiteral => self.parse_float_literal()?,
             Token::CharLiteral(c) => LiteralExpr::Char(c),
             Token::Char32Literal(c) => LiteralExpr::Char32(c),
             Token::True => LiteralExpr::Bool(true),
@@ -244,6 +244,16 @@ impl<'source> Parser<'source> {
         i64::from_str_radix(src, radix)
             .map(|v| LiteralExpr::Integer(v))
             .map_err(|_| ParseError::InvalidToken("Invalid integer literal".to_string()))
+    }
+
+    fn parse_float_literal(&mut self) -> ParseResult<LiteralExpr> {
+        let mut src = self.lexer.slice();
+        if src.ends_with("f64") {
+            src = &src[..src.len() - 3];
+        }
+        src.parse::<f64>()
+            .map(|v| LiteralExpr::Float(v))
+            .map_err(|_| ParseError::InvalidToken("Invalid float literal".to_string()))
     }
 
     fn parse_template_expression(&mut self) -> ParseResult<Expression> {
