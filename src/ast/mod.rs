@@ -14,6 +14,7 @@ pub enum LiteralExpr {
     Float(f64),
     Char(u8),
     Char32(char),
+    String(String),
     Bool(bool),
 }
 

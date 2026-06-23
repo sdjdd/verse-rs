@@ -7,13 +7,14 @@ use crate::ast::{
     LiteralExpr,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Value {
     None,
     Integer(i64),
     Float(f64),
     Char(u8),
     Char32(char),
+    String(String),
     Bool(bool),
 }
 
@@ -26,6 +27,7 @@ impl Display for Value {
             Value::Float(value) => write!(f, "{}", value),
             Value::Char(value) => write!(f, "{}", *value as char),
             Value::Char32(value) => write!(f, "{}", value),
+            Value::String(value) => write!(f, "{}", value),
         }
     }
 }
@@ -66,13 +68,13 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
 
 fn eval_assignment(expr: &AssignmentExpr, ctx: &mut EvalContext) -> EvalResult {
     let value = eval(&expr.expr, ctx)?;
-    ctx.bindings.insert(expr.target.clone(), value);
+    ctx.bindings.insert(expr.target.clone(), value.clone());
     Ok(value)
 }
 
 fn eval_identifier(expr: &IdentifierExpr, ctx: &mut EvalContext) -> EvalResult {
     if let Some(value) = ctx.bindings.get(&expr.name) {
-        Ok(*value)
+        Ok(value.clone())
     } else {
         Err(EvalError::ReferenceError(format!(
             "{} is not defined",
@@ -87,6 +89,7 @@ fn eval_literal(expr: &LiteralExpr, _ctx: &mut EvalContext) -> EvalResult {
         LiteralExpr::Float(value) => Value::Float(*value),
         LiteralExpr::Char(value) => Value::Char(*value),
         LiteralExpr::Char32(value) => Value::Char32(*value),
+        LiteralExpr::String(value) => Value::String(value.clone()),
         LiteralExpr::Bool(value) => Value::Bool(*value),
     };
     Ok(value)
@@ -111,7 +114,7 @@ fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
         BinaryOperator::Plus => match (left, right) {
             (Value::Integer(l), Value::Integer(r)) => Value::Integer(l + r),
             (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
-            _ => unimplemented!("{:?} op {:?}", left, right),
+            _ => unimplemented!(),
         },
         BinaryOperator::Sub => match (left, right) {
             (Value::Integer(l), Value::Integer(r)) => Value::Integer(l - r),

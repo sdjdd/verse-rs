@@ -74,6 +74,9 @@ pub enum Token {
     #[regex(r"0u[0-9A-Fa-f]{5}", char_callback_hex)]
     Char32Literal(char),
 
+    #[regex(r#""([^"]|\\.)*""#)]
+    StringLiteral,
+
     #[token("true")]
     True,
 

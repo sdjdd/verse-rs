@@ -254,8 +254,42 @@ impl<'source> Parser<'source> {
             Token::Char32Literal(c) => LiteralExpr::Char32(c),
             Token::True => LiteralExpr::Bool(true),
             Token::False => LiteralExpr::Bool(false),
+            Token::StringLiteral => self.parse_string_literal()?,
             token => return Err(ParseError::UnexpectedToken(token)),
         };
         Ok(expr)
+    }
+
+    fn parse_string_literal(&mut self) -> ParseResult<LiteralExpr> {
+        let src = self.lexer.slice();
+        let mut chars = Vec::new();
+        let mut escaped = false;
+        for mut ch in src[1..src.len() - 1].chars() {
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if escaped {
+                ch = match ch {
+                    't' => '\u{0009}',
+                    'n' => '\u{000A}',
+                    'r' => '\u{000D}',
+                    '"' => '\u{0022}',
+                    '\'' => '\u{0027}',
+                    '\\' => '\u{005C}',
+                    '{' => '\u{007B}',
+                    '}' => '\u{007D}',
+                    '<' => '\u{003C}',
+                    '>' => '\u{003E}',
+                    '&' => '\u{0026}',
+                    '#' => '\u{0023}',
+                    '~' => '\u{007E}',
+                    _ => ch,
+                };
+                escaped = false;
+            }
+            chars.push(ch);
+        }
+        Ok(LiteralExpr::String(chars.iter().collect()))
     }
 }
