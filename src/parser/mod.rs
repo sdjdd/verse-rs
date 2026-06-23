@@ -220,7 +220,7 @@ impl<'source> Parser<'source> {
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
         let expr = match self.next()? {
-            Token::IntegerLiteral(value) => LiteralExpr::Integer(value),
+            Token::IntegerLiteral => self.parse_integer_literal()?,
             Token::FloatLiteral(value) => LiteralExpr::Float(value),
             Token::CharLiteral(c) => LiteralExpr::Char(c),
             Token::Char32Literal(c) => LiteralExpr::Char32(c),
@@ -232,6 +232,18 @@ impl<'source> Parser<'source> {
             token => return Err(ParseError::UnexpectedToken(token)),
         };
         Ok(Expression::Literal(expr))
+    }
+
+    fn parse_integer_literal(&mut self) -> ParseResult<LiteralExpr> {
+        let mut src = self.lexer.slice();
+        let mut radix = 10;
+        if src.starts_with("0x") {
+            src = &src[2..];
+            radix = 16;
+        }
+        i64::from_str_radix(src, radix)
+            .map(|v| LiteralExpr::Integer(v))
+            .map_err(|_| ParseError::InvalidToken("Invalid integer literal".to_string()))
     }
 
     fn parse_template_expression(&mut self) -> ParseResult<Expression> {

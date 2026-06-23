@@ -60,9 +60,9 @@ pub enum Token {
     #[token("/")]
     Slash,
 
-    #[regex("[0-9]+", |lex| integer_callback(lex, 10))]
-    #[regex("0x[0-9A-Fa-f]+", |lex| integer_callback(lex, 16))]
-    IntegerLiteral(i64),
+    #[regex("[0-9]+")]
+    #[regex("0x[0-9A-Fa-f]+")]
+    IntegerLiteral,
 
     #[regex(r"[0-9]+\.[0-9]+(e[+-]?[0-9]+)?(f64)?", float_callback)]
     FloatLiteral(f64),
@@ -119,12 +119,6 @@ fn whitespace_callback(lex: &mut Lexer) -> Skip {
 fn newline_callback(lex: &mut Lexer) -> Skip {
     lex.extras.indent = 0;
     Skip
-}
-
-fn integer_callback(lex: &Lexer, radix: u32) -> Result<i64, LexerError> {
-    let start = if radix == 10 { 0 } else { 16 };
-    i64::from_str_radix(&lex.slice()[start..], radix)
-        .map_err(|_| LexerError::InvalidToken("Invalid integer literal".to_string()))
 }
 
 fn float_callback(lex: &Lexer) -> Result<f64, LexerError> {
