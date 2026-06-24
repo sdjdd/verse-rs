@@ -14,16 +14,28 @@ pub struct Program {
     pub expressions: Vec<Expression>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SourceLoc {
+    pub row: usize,
+    pub col: usize,
+}
+
+impl std::fmt::Display for SourceLoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.row, self.col)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("Unexpected token {0:?}")]
-    UnexpectedToken(Token),
+    #[error("Unexpected token {token:?} at {loc}")]
+    UnexpectedToken { token: Token, loc: SourceLoc },
 
-    #[error("Invalid token {0}")]
-    InvalidToken(String),
+    #[error("Invalid token {token} at {loc}")]
+    InvalidToken { token: String, loc: SourceLoc },
 
-    #[error("SyntaxError: {0}")]
-    SyntaxError(String),
+    #[error("SyntaxError: {message} at {loc}")]
+    SyntaxError { message: String, loc: SourceLoc },
 }
 
 pub type ParseResult<T> = Result<T, ParseError>;
@@ -33,6 +45,8 @@ pub struct Parser<'source> {
     current_token: Option<Token>,
     row: usize,
     col: usize,
+    token_row: usize,
+    token_col: usize,
 }
 
 impl<'source> Parser<'source> {
@@ -42,6 +56,15 @@ impl<'source> Parser<'source> {
             current_token: None,
             row: 0,
             col: 0,
+            token_row: 0,
+            token_col: 0,
+        }
+    }
+
+    fn loc(&self) -> SourceLoc {
+        SourceLoc {
+            row: self.token_row + 1,
+            col: self.token_col + 1,
         }
     }
 
@@ -59,9 +82,14 @@ impl<'source> Parser<'source> {
             return Ok(token);
         }
         let token = loop {
+            self.token_row = self.row;
+            self.token_col = self.col;
             let token = match self.lexer.next() {
                 Some(token) => {
-                    token.map_err(|_| ParseError::InvalidToken(self.lexer.slice().to_string()))?
+                    token.map_err(|_| ParseError::InvalidToken {
+                        token: self.lexer.slice().to_string(),
+                        loc: self.loc(),
+                    })?
                 }
                 None => break Token::EOF,
             };
@@ -88,7 +116,10 @@ impl<'source> Parser<'source> {
                 if token == tk {
                     Ok(())
                 } else {
-                    Err(ParseError::UnexpectedToken(tk))
+                    Err(ParseError::UnexpectedToken {
+                        token: tk,
+                        loc: self.loc(),
+                    })
                 }
             }
             Err(err) => Err(err),
@@ -130,9 +161,10 @@ impl<'source> Parser<'source> {
             let target = match lhs {
                 Expression::Id(expr) => expr.name,
                 _ => {
-                    return Err(SyntaxError(
-                        "Invalid left-hand side in assignment".to_string(),
-                    ));
+                    return Err(SyntaxError {
+                        message: "Invalid left-hand side in assignment".to_string(),
+                        loc: self.loc(),
+                    });
                 }
             };
             let rhs = self.parse_expression()?;
@@ -187,7 +219,12 @@ impl<'source> Parser<'source> {
         if self.consume_if(Token::LParen) {
             let callee = match func {
                 Expression::Id(expr) => expr.name,
-                _ => return Err(SyntaxError("Is not a function".to_string())),
+                _ => {
+                    return Err(SyntaxError {
+                        message: "Is not a function".to_string(),
+                        loc: self.loc(),
+                    })
+                }
             };
             let mut arguments = Vec::new();
             while !self.consume_if(Token::RParen) {
@@ -251,7 +288,12 @@ impl<'source> Parser<'source> {
             Token::StringLiteral => LiteralExpr::String(
                 self.escape_string_literal(&self.lexer.slice()[1..self.lexer.slice().len() - 1]),
             ),
-            token => return Err(ParseError::UnexpectedToken(token)),
+            token => {
+                return Err(ParseError::UnexpectedToken {
+                    token,
+                    loc: self.loc(),
+                })
+            }
         };
         Ok(Expression::Literal(expr))
     }
@@ -265,7 +307,10 @@ impl<'source> Parser<'source> {
         }
         i64::from_str_radix(src, radix)
             .map(|v| LiteralExpr::Integer(v))
-            .map_err(|_| ParseError::InvalidToken("Invalid integer literal".to_string()))
+            .map_err(|_| ParseError::InvalidToken {
+                token: "Invalid integer literal".to_string(),
+                loc: self.loc(),
+            })
     }
 
     fn parse_float_literal(&mut self) -> ParseResult<LiteralExpr> {
@@ -275,7 +320,10 @@ impl<'source> Parser<'source> {
         }
         src.parse::<f64>()
             .map(|v| LiteralExpr::Float(v))
-            .map_err(|_| ParseError::InvalidToken("Invalid float literal".to_string()))
+            .map_err(|_| ParseError::InvalidToken {
+                token: "Invalid float literal".to_string(),
+                loc: self.loc(),
+            })
     }
 
     fn parse_char_literal(&mut self) -> ParseResult<LiteralExpr> {
