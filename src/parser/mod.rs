@@ -30,34 +30,56 @@ pub type ParseResult<T> = Result<T, ParseError>;
 
 pub struct Parser<'source> {
     lexer: Lexer<'source>,
-    peek_token: Option<Token>,
+    current_token: Option<Token>,
+    row: usize,
+    col: usize,
 }
 
 impl<'source> Parser<'source> {
     pub fn new(lexer: Lexer<'source>) -> Self {
         Self {
             lexer,
-            peek_token: None,
+            current_token: None,
+            row: 0,
+            col: 0,
         }
     }
 
     fn peek(&mut self) -> ParseResult<Token> {
-        if let Some(token) = self.peek_token {
+        if let Some(token) = self.current_token {
             return Ok(token);
         }
         let token = self.next()?;
-        self.peek_token = Some(token);
+        self.current_token = Some(token);
         Ok(token)
     }
 
     fn next(&mut self) -> ParseResult<Token> {
-        if let Some(token) = self.peek_token.take() {
-            Ok(token)
-        } else if let Some(token) = self.lexer.next() {
-            token.map_err(|_| ParseError::InvalidToken(self.lexer.slice().to_string()))
-        } else {
-            Ok(Token::EOF)
+        if let Some(token) = self.current_token.take() {
+            return Ok(token);
         }
+        let token = loop {
+            let token = match self.lexer.next() {
+                Some(token) => {
+                    token.map_err(|_| ParseError::InvalidToken(self.lexer.slice().to_string()))?
+                }
+                None => break Token::EOF,
+            };
+            match token {
+                Token::Whitespace | Token::Tabs => {
+                    self.col += self.lexer.slice().len();
+                    continue;
+                }
+                Token::Newline => {
+                    self.row += 1;
+                    self.col = 0;
+                    continue;
+                }
+                _ => break token,
+            }
+        };
+        self.col += self.lexer.slice().len();
+        Ok(token)
     }
 
     fn expect(&mut self, token: Token) -> ParseResult<()> {
@@ -77,7 +99,7 @@ impl<'source> Parser<'source> {
         match self.peek() {
             Ok(tk) => {
                 if tk == token {
-                    self.peek_token.take();
+                    self.current_token.take();
                     true
                 } else {
                     false

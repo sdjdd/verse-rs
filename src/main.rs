@@ -3,9 +3,9 @@ use verse::eval::{EvalContext, Value, eval};
 use verse::{lexer::Token, parser::Parser};
 
 fn main() {
-    let source = "
-        0o61
-    ";
+    let source = r#"
+        "\<"
+    "#;
     let lexer = Token::lexer(source);
     let mut parser = Parser::new(lexer);
     let mut ctx = EvalContext::new();

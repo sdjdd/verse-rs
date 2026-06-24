@@ -1,13 +1,8 @@
-use logos::{Logos, Skip};
+use logos::Logos;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TokenInfo {
     pub indent: usize,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct LexerState {
-    indent: usize,
 }
 
 #[derive(Default, Debug, PartialEq, Clone)]
@@ -24,16 +19,17 @@ impl LexerError {
 }
 
 #[derive(Logos, Debug, PartialEq, Clone, Copy)]
-// #[logos(skip r"[ \t\n\f]")]
-#[logos(extras = LexerState)]
 #[logos(error(LexerError, LexerError::from_lexer))]
 #[logos(subpattern escape = r#"[tnr"'\\{}<>&#~]"#)]
 #[logos(subpattern string = r#"([^(?&escape)]|\\.)*"#)]
 pub enum Token {
-    #[regex(r"[ \t]+", whitespace_callback)]
+    #[regex(r"[ ]+")]
     Whitespace,
 
-    #[regex(r"\r?\n", newline_callback)]
+    #[regex(r"[\t]+")]
+    Tabs,
+
+    #[regex(r"\r?\n")]
     Newline,
 
     #[token(":=")]
@@ -110,13 +106,3 @@ pub enum Token {
 }
 
 pub type Lexer<'src> = logos::Lexer<'src, Token>;
-
-fn whitespace_callback(lex: &mut Lexer) -> Skip {
-    lex.extras.indent += lex.span().count();
-    Skip
-}
-
-fn newline_callback(lex: &mut Lexer) -> Skip {
-    lex.extras.indent = 0;
-    Skip
-}
