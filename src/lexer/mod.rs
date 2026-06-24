@@ -56,6 +56,9 @@ pub enum Token {
     #[token("/")]
     Slash,
 
+    #[token("=")]
+    Eq,
+
     #[regex("[0-9]+")]
     #[regex("0x[0-9A-Fa-f]+")]
     IntegerLiteral,

@@ -42,6 +42,7 @@ pub enum BinaryOperator {
     Sub,
     Mul,
     Div,
+    Eq,
 }
 
 #[derive(Debug, Clone)]

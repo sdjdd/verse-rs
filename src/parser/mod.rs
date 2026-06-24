@@ -85,12 +85,10 @@ impl<'source> Parser<'source> {
             self.token_row = self.row;
             self.token_col = self.col;
             let token = match self.lexer.next() {
-                Some(token) => {
-                    token.map_err(|_| ParseError::InvalidToken {
-                        token: self.lexer.slice().to_string(),
-                        loc: self.loc(),
-                    })?
-                }
+                Some(token) => token.map_err(|_| ParseError::InvalidToken {
+                    token: self.lexer.slice().to_string(),
+                    loc: self.loc(),
+                })?,
                 None => break Token::EOF,
             };
             match token {
@@ -156,7 +154,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_assignment_expr(&mut self) -> ParseResult<Expression> {
-        let mut lhs = self.parse_additive_expr()?;
+        let mut lhs = self.parse_equality_expr()?;
         while self.consume_if(Token::ColonEq) {
             let target = match lhs {
                 Expression::Id(expr) => expr.name,
@@ -171,6 +169,24 @@ impl<'source> Parser<'source> {
             lhs = Expression::Assign(AssignmentExpr {
                 target,
                 expr: Box::new(rhs),
+            });
+        }
+        Ok(lhs)
+    }
+
+    fn parse_equality_expr(&mut self) -> ParseResult<Expression> {
+        let mut lhs = self.parse_additive_expr()?;
+        loop {
+            let op = match self.peek()? {
+                Token::Eq => BinaryOperator::Eq,
+                _ => break,
+            };
+            self.next().unwrap();
+            let rhs = self.parse_additive_expr()?;
+            lhs = Expression::Binary(BinaryExpr {
+                operator: op,
+                left: Box::new(lhs),
+                right: Box::new(rhs),
             });
         }
         Ok(lhs)
@@ -223,7 +239,7 @@ impl<'source> Parser<'source> {
                     return Err(SyntaxError {
                         message: "Is not a function".to_string(),
                         loc: self.loc(),
-                    })
+                    });
                 }
             };
             let mut arguments = Vec::new();
@@ -292,7 +308,7 @@ impl<'source> Parser<'source> {
                 return Err(ParseError::UnexpectedToken {
                     token,
                     loc: self.loc(),
-                })
+                });
             }
         };
         Ok(Expression::Literal(expr))
