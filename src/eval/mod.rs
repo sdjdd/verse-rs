@@ -76,27 +76,22 @@ fn eval_literal(expr: &LiteralExpr, _ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
-    let mut args = Vec::new();
-    for arg in &expr.arguments {
-        if let Ok(value) = eval(arg, ctx)? {
-            args.push(value);
-        } else {
-            return Ok(Err(Failure()));
-        }
-    }
-
     match expr.callee.as_ref() {
         Expression::Id(id) => match id.name.as_str() {
             "Print" => {
-                if let Some(arg) = args.first() {
-                    println!("{}", arg);
+                if let Some(arg) = expr.arguments.first() {
+                    if let Ok(value) = eval(arg, ctx)? {
+                        println!("{}", value);
+                    }
                 }
                 Ok(Ok(Value::None))
             }
             name => {
-                if let Some(value) = ctx.bindings.get(name) {
+                if let Some(value) = ctx.bindings.get(name).cloned() {
                     match value {
-                        Value::Tuple(elements) => Ok(eval_call_tuple(&elements, &args)?),
+                        Value::Tuple(elements) => {
+                            Ok(eval_call_tuple(&elements, &expr.arguments, ctx)?)
+                        }
                         _ => unimplemented!(),
                     }
                 } else {
@@ -108,17 +103,22 @@ fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
     }
 }
 
-fn eval_call_tuple(elements: &[Value], arguments: &[Value]) -> EvalResult {
+fn eval_call_tuple(
+    elements: &[Value],
+    arguments: &[Expression],
+    ctx: &mut EvalContext,
+) -> EvalResult {
     if arguments.len() != 1 {
         return Err(EvalError::SyntaxError(format!(
             "expected 1 arguments, found {}",
             arguments.len()
         )));
     }
-    match arguments[0] {
+
+    map_eval(ctx, &arguments[0], |arg| match arg {
         Value::Integer(idx) => {
             if idx >= 0 || idx < elements.len() as i64 {
-                Ok(Ok(elements[idx as usize].clone()))
+                Ok(elements[idx as usize].clone())
             } else {
                 Err(EvalError::SyntaxError(format!(
                     "index out of bounds: the length is {} but the index is {}",
@@ -128,7 +128,7 @@ fn eval_call_tuple(elements: &[Value], arguments: &[Value]) -> EvalResult {
             }
         }
         _ => unimplemented!(),
-    }
+    })
 }
 
 fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
@@ -262,4 +262,14 @@ fn eval_tuple(expr: &TupleExpr, ctx: &mut EvalContext) -> EvalResult {
         }
     }
     Ok(Ok(Value::Tuple(values)))
+}
+
+fn map_eval<F>(ctx: &mut EvalContext, expr: &Expression, op: F) -> EvalResult
+where
+    F: Fn(Value) -> Result<Value, EvalError>,
+{
+    match eval(expr, ctx) {
+        Ok(Ok(v)) => op(v).map(|v| Ok(v)),
+        t => t,
+    }
 }
