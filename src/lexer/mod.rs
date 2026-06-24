@@ -117,7 +117,8 @@ pub enum Token {
     #[token("else")]
     Else,
 
-    #[regex("[a-zA-Z_]+[a-zA-Z0-9_]*")]
+    #[regex("[A-Za-z][A-Za-z0-9_]*")]
+    #[regex("_[A-Za-z0-9_]+")]
     Ident,
 
     EOF,
