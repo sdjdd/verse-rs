@@ -32,16 +32,16 @@ impl Display for Value {
     }
 }
 
+#[derive(Debug)]
+pub struct Failure();
+
 #[derive(Error, Debug)]
 pub enum EvalError {
     #[error("ReferenceError: {0}")]
     ReferenceError(String),
-
-    #[error("TypeError: {0}")]
-    TypeError(String),
 }
 
-pub type EvalResult = Result<Value, EvalError>;
+pub type EvalResult = Result<Result<Value, Failure>, EvalError>;
 
 pub struct EvalContext {
     bindings: HashMap<String, Value>,
@@ -69,13 +69,15 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
 
 fn eval_assignment(expr: &AssignmentExpr, ctx: &mut EvalContext) -> EvalResult {
     let value = eval(&expr.expr, ctx)?;
-    ctx.bindings.insert(expr.target.clone(), value.clone());
+    if let Ok(value) = &value {
+        ctx.bindings.insert(expr.target.clone(), value.clone());
+    }
     Ok(value)
 }
 
 fn eval_identifier(expr: &IdentifierExpr, ctx: &mut EvalContext) -> EvalResult {
     if let Some(value) = ctx.bindings.get(&expr.name) {
-        Ok(value.clone())
+        Ok(Ok(value.clone()))
     } else {
         Err(EvalError::ReferenceError(format!(
             "{} is not defined",
@@ -93,63 +95,75 @@ fn eval_literal(expr: &LiteralExpr, _ctx: &mut EvalContext) -> EvalResult {
         LiteralExpr::String(value) => Value::String(value.clone()),
         LiteralExpr::Bool(value) => Value::Bool(*value),
     };
-    Ok(value)
+    Ok(Ok(value))
 }
 
 fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
     match expr.callee.as_str() {
         "Print" => {
             if let Some(arg) = expr.arguments.first() {
-                println!("{}", eval(arg, ctx)?);
+                println!("{}", eval(arg, ctx)?.unwrap());
             }
         }
         _ => unimplemented!(),
     };
-    Ok(Value::None)
+    Ok(Ok(Value::None))
 }
 
 fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
     let left = eval(&expr.left, ctx)?;
     let right = eval(&expr.right, ctx)?;
-    let value = match expr.operator {
-        BinaryOperator::Plus => match (left, right) {
-            (Value::Integer(l), Value::Integer(r)) => Value::Integer(l + r),
-            (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
-            _ => unimplemented!(),
-        },
-        BinaryOperator::Sub => match (left, right) {
-            (Value::Integer(l), Value::Integer(r)) => Value::Integer(l - r),
-            (Value::Float(l), Value::Float(r)) => Value::Float(l - r),
-            _ => unimplemented!(),
-        },
-        BinaryOperator::Mul => match (left, right) {
-            (Value::Integer(l), Value::Integer(r)) => Value::Integer(l * r),
-            (Value::Float(l), Value::Float(r)) => Value::Float(l * r),
-            _ => unimplemented!(),
-        },
-        BinaryOperator::Div => match (left, right) {
-            (Value::Integer(l), Value::Integer(r)) => Value::Integer(l / r),
-            (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
-            _ => unimplemented!(),
-        },
-    };
-    Ok(value)
+    match (left, right) {
+        (Ok(left), Ok(right)) => {
+            let value = match expr.operator {
+                BinaryOperator::Plus => match (left, right) {
+                    (Value::Integer(l), Value::Integer(r)) => Value::Integer(l + r),
+                    (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
+                    _ => unimplemented!(),
+                },
+                BinaryOperator::Sub => match (left, right) {
+                    (Value::Integer(l), Value::Integer(r)) => Value::Integer(l - r),
+                    (Value::Float(l), Value::Float(r)) => Value::Float(l - r),
+                    _ => unimplemented!(),
+                },
+                BinaryOperator::Mul => match (left, right) {
+                    (Value::Integer(l), Value::Integer(r)) => Value::Integer(l * r),
+                    (Value::Float(l), Value::Float(r)) => Value::Float(l * r),
+                    _ => unimplemented!(),
+                },
+                BinaryOperator::Div => match (left, right) {
+                    (Value::Integer(l), Value::Integer(r)) => Value::Integer(l / r),
+                    (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
+                    _ => unimplemented!(),
+                },
+                BinaryOperator::Eq => match (left, right) {
+                    (Value::Integer(l), Value::Integer(r)) => Value::Bool(l == r),
+                    (Value::Float(l), Value::Float(r)) => Value::Bool(l == r),
+                    _ => unimplemented!(),
+                },
+            };
+            Ok(Ok(value))
+        }
+        _ => Ok(Err(Failure())),
+    }
 }
 
 fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
     let test = eval(&expr.test, ctx)?;
-    if let Value::Bool(test) = test {
-        if test {
+    if let Ok(test) = test {
+        if !matches!(test, Value::Bool(false)) {
             eval(&expr.consequent, ctx)
         } else if let Some(alternate) = &expr.alternate {
             eval(alternate, ctx)
         } else {
-            Ok(Value::None)
+            Ok(Ok(Value::None))
         }
     } else {
-        Err(EvalError::TypeError(
-            "Expected bool in if condition".to_string(),
-        ))
+        if let Some(alternate) = &expr.alternate {
+            eval(alternate, ctx)
+        } else {
+            Ok(Ok(Value::None))
+        }
     }
 }
 
@@ -159,8 +173,14 @@ fn eval_template(expr: &TemplateExpression, ctx: &mut EvalContext) -> EvalResult
     for elem in expr.elements.iter() {
         match elem {
             TemplateElement::Raw(str) => strings.push(str.clone()),
-            TemplateElement::Expr(expr) => strings.push(eval(expr, ctx)?.to_string()),
+            TemplateElement::Expr(expr) => {
+                if let Ok(value) = eval(expr, ctx)? {
+                    strings.push(value.to_string());
+                } else {
+                    return Ok(Err(Failure()));
+                }
+            }
         }
     }
-    Ok(Value::String(strings.concat()))
+    Ok(Ok(Value::String(strings.concat())))
 }
