@@ -7,6 +7,7 @@ pub enum Value {
     Char32(char),
     String(String),
     Bool(bool),
+    Tuple(Vec<Value>),
 }
 
 impl std::fmt::Display for Value {
@@ -19,6 +20,16 @@ impl std::fmt::Display for Value {
             Value::Char(value) => write!(f, "{}", *value as char),
             Value::Char32(value) => write!(f, "{}", value),
             Value::String(value) => write!(f, "{}", value),
+            Value::Tuple(value) => {
+                write!(f, "(")?;
+                for (i, v) in value.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

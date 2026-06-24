@@ -8,6 +8,7 @@ pub enum Expression {
     If(IfExpr),
     Template(TemplateExpression),
     CompareChain(CompareChainExpr),
+    Tuple(TupleExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -33,7 +34,7 @@ pub struct AssignmentExpr {
 
 #[derive(Debug, Clone)]
 pub struct CallExpr {
-    pub callee: String,
+    pub callee: Box<Expression>,
     pub arguments: Vec<Expression>,
 }
 
@@ -84,4 +85,9 @@ pub enum CompareOp {
 pub struct CompareChainExpr {
     pub head: Box<Expression>,
     pub rest: Vec<(CompareOp, Expression)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TupleExpr {
+    pub elements: Vec<Expression>,
 }

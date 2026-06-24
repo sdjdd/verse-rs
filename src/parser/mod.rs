@@ -26,7 +26,11 @@ impl std::fmt::Display for SourceLoc {
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error("Unexpected token {token:?} at {loc}")]
-    UnexpectedToken { token: Token, loc: SourceLoc },
+    UnexpectedToken {
+        token: Token,
+        expected: Option<Token>,
+        loc: SourceLoc,
+    },
 
     #[error("Invalid token {token} at {loc}")]
     InvalidToken { token: String, loc: SourceLoc },
@@ -113,6 +117,7 @@ impl<'source> Parser<'source> {
                 } else {
                     Err(ParseError::UnexpectedToken {
                         token: tk,
+                        expected: Some(token),
                         loc: self.loc(),
                     })
                 }
@@ -237,26 +242,20 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_call_expr(&mut self) -> ParseResult<Expression> {
-        let func = self.parse_primary_expr()?;
+        let callee = self.parse_primary_expr()?;
         if self.consume_if(Token::LParen) {
-            let callee = match func {
-                Expression::Id(expr) => expr.name,
-                _ => {
-                    return Err(SyntaxError {
-                        message: "Is not a function".to_string(),
-                        loc: self.loc(),
-                    });
-                }
-            };
             let mut arguments = Vec::new();
             while !self.consume_if(Token::RParen) {
                 let expr = self.parse_additive_expr()?;
                 arguments.push(expr);
                 self.consume_if(Token::Comma);
             }
-            Ok(Expression::Call(CallExpr { callee, arguments }))
+            Ok(Expression::Call(CallExpr {
+                callee: Box::new(callee),
+                arguments,
+            }))
         } else {
-            Ok(func)
+            Ok(callee)
         }
     }
 
@@ -283,11 +282,7 @@ impl<'source> Parser<'source> {
         let expr = match self.peek()? {
             Token::Ident => Expression::Id(self.parse_identifier_expr()?),
             Token::TemplateHead => self.parse_template_expression()?,
-            Token::LParen => {
-                let expr = self.parse_expression()?;
-                self.expect(Token::RParen)?;
-                expr
-            }
+            Token::LParen => self.parse_tuple_expr()?,
             _ => self.parse_literal_expr()?,
         };
         Ok(expr)
@@ -313,6 +308,7 @@ impl<'source> Parser<'source> {
             token => {
                 return Err(ParseError::UnexpectedToken {
                     token,
+                    expected: None,
                     loc: self.loc(),
                 });
             }
@@ -418,6 +414,27 @@ impl<'source> Parser<'source> {
             chars.push(ch);
         }
         chars.iter().collect()
+    }
+
+    fn parse_tuple_expr(&mut self) -> ParseResult<Expression> {
+        self.expect(Token::LParen)?;
+        let expr = self.parse_expression()?;
+        match self.next()? {
+            Token::Comma => {
+                let mut elements = vec![expr];
+                while !self.consume_if(Token::RParen) {
+                    elements.push(self.parse_expression()?);
+                    self.consume_if(Token::Comma);
+                }
+                Ok(Expression::Tuple(TupleExpr { elements }))
+            }
+            Token::RParen => Ok(expr),
+            token => Err(ParseError::UnexpectedToken {
+                token,
+                expected: None,
+                loc: self.loc(),
+            }),
+        }
     }
 }
 

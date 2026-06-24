@@ -11,9 +11,12 @@ pub struct Failure();
 pub enum EvalError {
     #[error("ReferenceError: {0}")]
     ReferenceError(String),
+
+    #[error("SyntaxError: {0}")]
+    SyntaxError(String),
 }
 
-pub type EvalResult = Result<Result<Value, Failure>, EvalError>;
+pub type EvalResult<T = Value> = Result<Result<T, Failure>, EvalError>;
 
 pub struct EvalContext {
     bindings: HashMap<String, Value>,
@@ -37,6 +40,7 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
         Expression::If(expr) => eval_if(expr, ctx),
         Expression::Template(expr) => eval_template(expr, ctx),
         Expression::CompareChain(expr) => eval_compare_chain(expr, ctx),
+        Expression::Tuple(expr) => eval_tuple(expr, ctx),
     }
 }
 
@@ -72,15 +76,59 @@ fn eval_literal(expr: &LiteralExpr, _ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
-    match expr.callee.as_str() {
-        "Print" => {
-            if let Some(arg) = expr.arguments.first() {
-                println!("{}", eval(arg, ctx)?.unwrap());
+    let mut args = Vec::new();
+    for arg in &expr.arguments {
+        if let Ok(value) = eval(arg, ctx)? {
+            args.push(value);
+        } else {
+            return Ok(Err(Failure()));
+        }
+    }
+
+    match expr.callee.as_ref() {
+        Expression::Id(id) => match id.name.as_str() {
+            "Print" => {
+                if let Some(arg) = args.first() {
+                    println!("{}", arg);
+                }
+                Ok(Ok(Value::None))
+            }
+            name => {
+                if let Some(value) = ctx.bindings.get(name) {
+                    match value {
+                        Value::Tuple(elements) => Ok(eval_call_tuple(&elements, &args)?),
+                        _ => unimplemented!(),
+                    }
+                } else {
+                    return Err(EvalError::ReferenceError(format!("{} not found", name)));
+                }
+            }
+        },
+        _ => unimplemented!(),
+    }
+}
+
+fn eval_call_tuple(elements: &[Value], arguments: &[Value]) -> EvalResult {
+    if arguments.len() != 1 {
+        return Err(EvalError::SyntaxError(format!(
+            "expected 1 arguments, found {}",
+            arguments.len()
+        )));
+    }
+    match arguments[0] {
+        Value::Integer(idx) => {
+            if idx >= 0 || idx < elements.len() as i64 {
+                Ok(Ok(elements[idx as usize].clone()))
+            } else {
+                Err(EvalError::SyntaxError(format!(
+                    "index out of bounds: the length is {} but the index is {}",
+                    elements.len(),
+                    idx
+                )))
             }
         }
         _ => unimplemented!(),
-    };
-    Ok(Ok(Value::None))
+    }
 }
 
 fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
@@ -201,4 +249,17 @@ fn eval_compare_chain(expr: &CompareChainExpr, ctx: &mut EvalContext) -> EvalRes
     }
 
     Ok(Ok(leftmost))
+}
+
+fn eval_tuple(expr: &TupleExpr, ctx: &mut EvalContext) -> EvalResult {
+    let mut values = Vec::new();
+    values.reserve(expr.elements.len());
+    for expr in &expr.elements {
+        if let Ok(value) = eval(expr, ctx)? {
+            values.push(value);
+        } else {
+            return Ok(Err(Failure()));
+        }
+    }
+    Ok(Ok(Value::Tuple(values)))
 }
