@@ -1,10 +1,7 @@
 use thiserror::Error;
 
 use crate::{
-    ast::{
-        AssignmentExpr, BinaryExpr, BinaryOperator, CallExpr, Expression, IdentifierExpr, IfExpr,
-        LiteralExpr, TemplateElement, TemplateExpression,
-    },
+    ast::*,
     lexer::{Lexer, Token},
     parser::ParseError::SyntaxError,
 };
@@ -154,7 +151,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_assignment_expr(&mut self) -> ParseResult<Expression> {
-        let mut lhs = self.parse_equality_expr()?;
+        let mut lhs = self.parse_compare_chain_expr()?;
         while self.consume_if(Token::ColonEq) {
             let target = match lhs {
                 Expression::Id(expr) => expr.name,
@@ -174,22 +171,31 @@ impl<'source> Parser<'source> {
         Ok(lhs)
     }
 
-    fn parse_equality_expr(&mut self) -> ParseResult<Expression> {
-        let mut lhs = self.parse_additive_expr()?;
+    fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {
+        let head = self.parse_additive_expr()?;
+        let mut rest = Vec::new();
         loop {
             let op = match self.peek()? {
-                Token::Eq => BinaryOperator::Eq,
+                Token::Eq => CompareOp::Eq,
+                Token::NotEq => CompareOp::Ne,
+                Token::Greater => CompareOp::Gt,
+                Token::GreaterEq => CompareOp::Ge,
+                Token::Less => CompareOp::Lt,
+                Token::LessEq => CompareOp::Le,
                 _ => break,
             };
             self.next().unwrap();
-            let rhs = self.parse_additive_expr()?;
-            lhs = Expression::Binary(BinaryExpr {
-                operator: op,
-                left: Box::new(lhs),
-                right: Box::new(rhs),
-            });
+            let expr = self.parse_additive_expr()?;
+            rest.push((op, expr));
         }
-        Ok(lhs)
+        Ok(if rest.is_empty() {
+            head
+        } else {
+            Expression::CompareChain(CompareChainExpr {
+                head: Box::new(head),
+                rest,
+            })
+        })
     }
 
     fn parse_additive_expr(&mut self) -> ParseResult<Expression> {

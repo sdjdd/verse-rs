@@ -56,6 +56,21 @@ pub enum Token {
     #[token("/")]
     Slash,
 
+    #[token("<>")]
+    NotEq,
+
+    #[token("<=")]
+    LessEq,
+
+    #[token(">=")]
+    GreaterEq,
+
+    #[token("<")]
+    Less,
+
+    #[token(">")]
+    Greater,
+
     #[token("=")]
     Eq,
 

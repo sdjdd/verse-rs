@@ -7,6 +7,7 @@ pub enum Expression {
     Binary(BinaryExpr),
     If(IfExpr),
     Template(TemplateExpression),
+    CompareChain(CompareChainExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +43,6 @@ pub enum BinaryOperator {
     Sub,
     Mul,
     Div,
-    Eq,
 }
 
 #[derive(Debug, Clone)]
@@ -68,4 +68,20 @@ pub enum TemplateElement {
 #[derive(Debug, Clone)]
 pub struct TemplateExpression {
     pub elements: Vec<TemplateElement>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CompareOp {
+    Eq,
+    Ne,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompareChainExpr {
+    pub head: Box<Expression>,
+    pub rest: Vec<(CompareOp, Expression)>,
 }

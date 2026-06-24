@@ -1,36 +1,8 @@
-use std::{collections::HashMap, fmt::Display};
+use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::ast::{
-    AssignmentExpr, BinaryExpr, BinaryOperator, CallExpr, Expression, IdentifierExpr, IfExpr,
-    LiteralExpr, TemplateElement, TemplateExpression,
-};
-
-#[derive(Clone, Debug)]
-pub enum Value {
-    None,
-    Integer(i64),
-    Float(f64),
-    Char(u8),
-    Char32(char),
-    String(String),
-    Bool(bool),
-}
-
-impl Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::None => write!(f, ""),
-            Value::Bool(value) => write!(f, "{}", value),
-            Value::Integer(value) => write!(f, "{}", value),
-            Value::Float(value) => write!(f, "{}", value),
-            Value::Char(value) => write!(f, "{}", *value as char),
-            Value::Char32(value) => write!(f, "{}", value),
-            Value::String(value) => write!(f, "{}", value),
-        }
-    }
-}
+use crate::{ast::*, runtime::Value};
 
 #[derive(Debug)]
 pub struct Failure();
@@ -64,6 +36,7 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
         Expression::Binary(expr) => eval_binary(expr, ctx),
         Expression::If(expr) => eval_if(expr, ctx),
         Expression::Template(expr) => eval_template(expr, ctx),
+        Expression::CompareChain(expr) => eval_compare_chain(expr, ctx),
     }
 }
 
@@ -136,11 +109,6 @@ fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
                     (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
                     _ => unimplemented!(),
                 },
-                BinaryOperator::Eq => match (left, right) {
-                    (Value::Integer(l), Value::Integer(r)) => Value::Bool(l == r),
-                    (Value::Float(l), Value::Float(r)) => Value::Bool(l == r),
-                    _ => unimplemented!(),
-                },
             };
             Ok(Ok(value))
         }
@@ -149,8 +117,7 @@ fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
-    let test = eval(&expr.test, ctx)?;
-    if let Ok(test) = test {
+    if let Ok(test) = eval(&expr.test, ctx)? {
         if !matches!(test, Value::Bool(false)) {
             eval(&expr.consequent, ctx)
         } else if let Some(alternate) = &expr.alternate {
@@ -159,11 +126,7 @@ fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
             Ok(Ok(Value::None))
         }
     } else {
-        if let Some(alternate) = &expr.alternate {
-            eval(alternate, ctx)
-        } else {
-            Ok(Ok(Value::None))
-        }
+        Ok(Err(Failure()))
     }
 }
 
@@ -183,4 +146,59 @@ fn eval_template(expr: &TemplateExpression, ctx: &mut EvalContext) -> EvalResult
         }
     }
     Ok(Ok(Value::String(strings.concat())))
+}
+
+fn eval_compare_chain(expr: &CompareChainExpr, ctx: &mut EvalContext) -> EvalResult {
+    let leftmost = if let Ok(value) = eval(&expr.head, ctx)? {
+        value
+    } else {
+        return Ok(Err(Failure()));
+    };
+
+    let mut prev = leftmost.clone();
+
+    for (op, expr) in &expr.rest {
+        let current = if let Ok(value) = eval(expr, ctx)? {
+            value
+        } else {
+            return Ok(Err(Failure()));
+        };
+
+        match op {
+            CompareOp::Eq => {
+                if !(prev == current) {
+                    return Ok(Err(Failure()));
+                }
+            }
+            CompareOp::Ne => {
+                if !(prev != current) {
+                    return Ok(Err(Failure()));
+                }
+            }
+            CompareOp::Gt => {
+                if !(prev > current) {
+                    return Ok(Err(Failure()));
+                }
+            }
+            CompareOp::Ge => {
+                if !(prev >= current) {
+                    return Ok(Err(Failure()));
+                }
+            }
+            CompareOp::Lt => {
+                if !(prev < current) {
+                    return Ok(Err(Failure()));
+                }
+            }
+            CompareOp::Le => {
+                if !(prev <= current) {
+                    return Ok(Err(Failure()));
+                }
+            }
+        }
+
+        prev = current;
+    }
+
+    Ok(Ok(leftmost))
 }
