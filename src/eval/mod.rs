@@ -117,7 +117,7 @@ fn eval_call_tuple(
 
     map_eval(ctx, &arguments[0], |arg| match arg {
         Value::Integer(idx) => {
-            if idx >= 0 || idx < elements.len() as i64 {
+            if idx >= 0 && idx < elements.len() as i64 {
                 Ok(elements[idx as usize].clone())
             } else {
                 Err(EvalError::SyntaxError(format!(
