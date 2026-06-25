@@ -172,7 +172,11 @@ fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
             Ok(Ok(Value::None))
         }
     } else {
-        Ok(Err(Failure()))
+        if let Some(alternate) = &expr.alternate {
+            eval(alternate, ctx)
+        } else {
+            Ok(Err(Failure()))
+        }
     }
 }
 
