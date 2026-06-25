@@ -21,7 +21,7 @@ impl LexerError {
 #[derive(Logos, Debug, PartialEq, Clone, Copy)]
 #[logos(error(LexerError, LexerError::from_lexer))]
 #[logos(subpattern escape = r#"[tnr"'\\{}<>&#~]"#)]
-#[logos(subpattern string = r#"([^(?&escape)]|\\.)*"#)]
+#[logos(subpattern string = r#"([^"{}]|\\.)*"#)]
 pub enum Token {
     #[regex(r"[ ]+")]
     Whitespace,

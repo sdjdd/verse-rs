@@ -31,16 +31,16 @@ impl EvalContext {
 }
 
 pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
-    match expr {
-        Expression::Call(expr) => eval_call(expr, ctx),
-        Expression::Literal(expr) => eval_literal(expr, ctx),
-        Expression::Assign(expr) => eval_assignment(expr, ctx),
-        Expression::Id(expr) => eval_identifier(expr, ctx),
-        Expression::Binary(expr) => eval_binary(expr, ctx),
-        Expression::If(expr) => eval_if(expr, ctx),
-        Expression::Template(expr) => eval_template(expr, ctx),
-        Expression::CompareChain(expr) => eval_compare_chain(expr, ctx),
-        Expression::Tuple(expr) => eval_tuple(expr, ctx),
+    match &expr.kind {
+        ExprKind::Call(expr) => eval_call(expr, ctx),
+        ExprKind::Literal(expr) => eval_literal(expr, ctx),
+        ExprKind::Assign(expr) => eval_assignment(expr, ctx),
+        ExprKind::Id(expr) => eval_identifier(expr, ctx),
+        ExprKind::Binary(expr) => eval_binary(expr, ctx),
+        ExprKind::If(expr) => eval_if(expr, ctx),
+        ExprKind::Template(expr) => eval_template(expr, ctx),
+        ExprKind::CompareChain(expr) => eval_compare_chain(expr, ctx),
+        ExprKind::Tuple(expr) => eval_tuple(expr, ctx),
     }
 }
 
@@ -76,10 +76,10 @@ fn eval_literal(expr: &LiteralExpr, _ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
-    match expr.callee.as_ref() {
-        Expression::Id(id) => match id.name.as_str() {
+    match &expr.callee.kind {
+        ExprKind::Id(id) => match id.name.as_str() {
             "Print" => {
-                if let Some(arg) = expr.arguments.first() {
+                if let Some(arg) = expr.args.first() {
                     if let Ok(value) = eval(arg, ctx)? {
                         println!("{}", value);
                     }
@@ -89,9 +89,7 @@ fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
             name => {
                 if let Some(value) = ctx.bindings.get(name).cloned() {
                     match value {
-                        Value::Tuple(elements) => {
-                            Ok(eval_call_tuple(&elements, &expr.arguments, ctx)?)
-                        }
+                        Value::Tuple(elements) => Ok(eval_call_tuple(&elements, &expr.args, ctx)?),
                         _ => unimplemented!(),
                     }
                 } else {
@@ -132,11 +130,11 @@ fn eval_call_tuple(
 }
 
 fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
-    let left = eval(&expr.left, ctx)?;
-    let right = eval(&expr.right, ctx)?;
+    let left = eval(&expr.lhs, ctx)?;
+    let right = eval(&expr.rhs, ctx)?;
     match (left, right) {
         (Ok(left), Ok(right)) => {
-            let value = match expr.operator {
+            let value = match expr.op {
                 BinaryOperator::Plus => match (left, right) {
                     (Value::Integer(l), Value::Integer(r)) => Value::Integer(l + r),
                     (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
