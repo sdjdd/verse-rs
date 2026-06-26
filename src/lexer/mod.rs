@@ -13,6 +13,7 @@ pub enum LexerError {
     Unknown,
     InvalidToken(String),
     InvalidIndentSize,
+    InconsistentIndent,
 }
 
 impl LexerError {
@@ -27,7 +28,7 @@ impl LexerError {
 #[logos(subpattern string = r#"([^"{}]|\\.)*"#)]
 pub enum Token {
     #[regex(r"[ ]+")]
-    Whitespace,
+    Whitespaces,
 
     #[regex(r"[\t]+")]
     Tabs,
@@ -138,12 +139,24 @@ pub type Lexer<'src> = logos::Lexer<'src, Token>;
 
 pub type Span = Range<usize>;
 
+#[derive(Clone, Copy)]
+enum IndentType {
+    Space,
+    Tab,
+}
+
+#[derive(Clone)]
+struct IndentInfo {
+    typ: IndentType,
+    span: Span,
+}
+
 #[derive(Clone)]
 pub struct IndentAwareLexer<'src> {
     lexer: SpannedIter<'src, Token>,
-    indent_stack: Vec<usize>,
     pending: VecDeque<(Result<Token, LexerError>, logos::Span)>,
-    current_indent_span: Span,
+    indent_stack: Vec<IndentInfo>,
+    current_indent: Option<IndentInfo>,
     at_line_start: bool,
     has_error: bool,
 }
@@ -152,9 +165,9 @@ impl<'src> IndentAwareLexer<'src> {
     pub fn new(source: &'src str) -> Self {
         Self {
             lexer: Token::lexer(source).spanned(),
-            indent_stack: vec![],
             pending: VecDeque::new(),
-            current_indent_span: 0..0,
+            indent_stack: vec![],
+            current_indent: None,
             at_line_start: true,
             has_error: false,
         }
@@ -186,61 +199,88 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
 
             match token {
                 Token::Newline => {
-                    self.current_indent_span = span.end..span.end;
                     if self.at_line_start {
                         // strip empty line
                         continue;
+                    } else {
+                        self.current_indent = None;
+                        self.at_line_start = true;
                     }
-                    self.at_line_start = true;
                 }
-                Token::Whitespace | Token::Tabs => {
+                Token::Whitespaces | Token::Tabs => {
                     if self.at_line_start {
-                        self.current_indent_span.end = span.end;
+                        self.current_indent = Some(IndentInfo {
+                            typ: match token {
+                                Token::Whitespaces => IndentType::Space,
+                                Token::Tabs => IndentType::Tab,
+                                _ => unreachable!(),
+                            },
+                            span: span.clone(),
+                        })
+                    } else if let Some(indent) = self.current_indent.as_mut() {
+                        indent.span.end = span.end;
+                        match (indent.typ, token) {
+                            (IndentType::Space, Token::Tabs)
+                            | (IndentType::Tab, Token::Whitespaces) => {
+                                self.has_error = true;
+                                return Some((Err(LexerError::InconsistentIndent), span));
+                            }
+                            _ => {}
+                        }
                     }
                     continue;
                 }
                 _ => {
                     if self.at_line_start {
-                        let last_size = self.indent_stack.last().copied().unwrap_or(0);
-                        let current_size = self.current_indent_span.clone().count();
+                        if let Some(current_indent) = self.current_indent.take() {
+                            let last_size = self
+                                .indent_stack
+                                .last()
+                                .cloned()
+                                .map(|v| v.span.count())
+                                .unwrap_or(0);
 
-                        if current_size > last_size {
-                            self.indent_stack.push(current_size);
-                            self.pending
-                                .push_back((Ok(Token::Indent), self.current_indent_span.clone()));
-                        } else if current_size < last_size {
-                            if let Some(pos) =
-                                self.indent_stack.iter().rposition(|&v| v == current_size)
-                            {
-                                for _ in pos + 1..self.indent_stack.len() {
-                                    self.pending.push_back((
-                                        Ok(Token::Dedent),
-                                        self.current_indent_span.clone(),
-                                    ));
-                                }
-                                self.indent_stack.truncate(pos + 1);
-                            } else {
-                                if current_size == 0 {
-                                    for _ in &self.indent_stack {
+                            let current_size = current_indent.span.clone().count();
+
+                            if current_size > last_size {
+                                self.indent_stack.push(IndentInfo {
+                                    typ: current_indent.typ,
+                                    span: current_indent.span.clone(),
+                                });
+                                self.pending
+                                    .push_back((Ok(Token::Indent), current_indent.span.clone()));
+                            } else if current_size < last_size {
+                                if let Some(pos) = self
+                                    .indent_stack
+                                    .iter()
+                                    .rposition(|v| v.span.clone().count() == current_size)
+                                {
+                                    for _ in pos + 1..self.indent_stack.len() {
                                         self.pending.push_back((
                                             Ok(Token::Dedent),
-                                            self.current_indent_span.clone(),
+                                            current_indent.span.clone(),
                                         ));
                                     }
-                                    self.indent_stack.clear();
+                                    self.indent_stack.truncate(pos + 1);
                                 } else {
                                     self.has_error = true;
                                     self.pending.clear();
                                     return Some((
                                         Err(LexerError::InvalidIndentSize),
-                                        self.current_indent_span.clone(),
+                                        current_indent.span.clone(),
                                     ));
                                 }
                             }
+                        } else if !self.indent_stack.is_empty() {
+                            for _ in &self.indent_stack {
+                                self.pending
+                                    .push_back((Ok(Token::Dedent), span.start..span.start)); // zero size dedent
+                            }
+                            self.indent_stack.clear();
                         }
-
-                        self.at_line_start = false;
                     }
+
+                    self.at_line_start = false;
                 }
             }
 
