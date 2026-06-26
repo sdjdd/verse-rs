@@ -126,7 +126,7 @@ pub enum Token {
 
     #[regex("[A-Za-z][A-Za-z0-9_]*")]
     #[regex("_[A-Za-z0-9_]+")]
-    Ident,
+    Id,
 
     // Synthetic tokens - injected by IndentAwareLexer, never produced by logos
     Indent,

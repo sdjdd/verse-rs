@@ -334,7 +334,7 @@ impl<'src> Parser<'src> {
 
     fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
         let expr = match self.peek()? {
-            Token::Ident => self.parse_identifier_expr()?,
+            Token::Id => self.parse_identifier_expr()?,
             Token::TemplateHead => self.parse_template_expression()?,
             Token::LParen => self.parse_tuple_expr()?,
             _ => self.parse_literal_expr()?,
@@ -344,7 +344,7 @@ impl<'src> Parser<'src> {
 
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
         let start = self.current_token_span.clone();
-        self.expect(Token::Ident)?;
+        self.expect(Token::Id)?;
         let name = self.slice().to_string();
         Ok(self.make_expr(start, IdentifierExpr::new(name)))
     }
