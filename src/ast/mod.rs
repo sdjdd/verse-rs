@@ -2,24 +2,6 @@ use derive_more::{Constructor, From};
 
 use crate::lexer::Span;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Position {
-    pub ln: usize,
-    pub col: usize,
-}
-
-impl Default for Position {
-    fn default() -> Self {
-        Self { ln: 1, col: 1 }
-    }
-}
-
-impl std::fmt::Display for Position {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{},{}", self.ln, self.col)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub kind: ExprKind,
