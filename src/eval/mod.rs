@@ -89,7 +89,7 @@ fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
                         println!("{}", value);
                     }
                 }
-                Ok(Ok(Value::None))
+                Ok(Ok(Value::Void))
             }
             name => {
                 if let Some(value) = ctx.bindings.get(name).cloned() {
@@ -174,7 +174,7 @@ fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
         } else if let Some(alternate) = &expr.alternate {
             eval(alternate, ctx)
         } else {
-            Ok(Ok(Value::None))
+            Ok(Ok(Value::Void))
         }
     } else {
         if let Some(alternate) = &expr.alternate {
@@ -272,7 +272,7 @@ fn eval_tuple(expr: &TupleExpr, ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_block(expr: &BlockExpr, ctx: &mut EvalContext) -> EvalResult {
-    let mut result = Ok(Value::None);
+    let mut result = Ok(Value::Void);
     for expr in &expr.body {
         result = eval(expr, ctx)?;
         if result.is_err() {

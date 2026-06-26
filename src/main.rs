@@ -40,7 +40,7 @@ fn main() {
             err
         })
         .unwrap();
-    let mut value = Ok(Value::None);
+    let mut value = Ok(Value::Void);
     program.expressions.iter().for_each(|expr| {
         value = eval(expr, &mut ctx).unwrap();
     });

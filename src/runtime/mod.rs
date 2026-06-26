@@ -1,6 +1,6 @@
 #[derive(Clone, Debug)]
 pub enum Value {
-    None,
+    Void,
     Integer(i64),
     Float(f64),
     Char(u8),
@@ -13,7 +13,7 @@ pub enum Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::None => write!(f, ""),
+            Value::Void => Ok(()),
             Value::Bool(value) => write!(f, "{}", value),
             Value::Integer(value) => write!(f, "{}", value),
             Value::Float(value) => write!(f, "{}", value),
