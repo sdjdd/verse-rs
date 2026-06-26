@@ -233,7 +233,7 @@ impl<'src> Parser<'src> {
         if self.consume_if(Token::LParen)? {
             let mut args = Vec::new();
             while !self.consume_if(Token::RParen)? {
-                let expr = self.parse_additive_expr()?;
+                let expr = self.parse_expression()?;
                 args.push(expr);
                 self.consume_if(Token::Comma)?;
             }
