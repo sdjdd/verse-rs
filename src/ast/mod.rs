@@ -65,13 +65,18 @@ pub struct IdentifierExpr {
 }
 
 #[derive(Debug, Clone)]
+pub enum LValue {
+    Id(IdentifierExpr),
+}
+
+#[derive(Debug, Clone)]
 pub struct AssignmentExpr {
-    pub target: String,
+    pub target: LValue,
     pub expr: Box<Expression>,
 }
 
 impl AssignmentExpr {
-    pub fn new(target: String, expr: Expression) -> Self {
+    pub fn new(target: LValue, expr: Expression) -> Self {
         Self {
             target,
             expr: expr.into(),

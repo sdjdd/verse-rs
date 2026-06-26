@@ -155,11 +155,11 @@ impl<'src> Parser<'src> {
         let start = self.current_token_span.clone();
         let mut lhs = self.parse_compare_chain_expr()?;
         while self.consume_if(Token::ColonEq)? {
-            let target = match &lhs.kind {
-                ExprKind::Id(expr) => expr.name.clone(),
+            let target = match lhs.kind {
+                ExprKind::Id(id) => LValue::Id(id),
                 _ => {
                     return Err(ParseError::SyntaxError {
-                        message: "Invalid left-hand side in assignment".to_string(),
+                        message: "Invalid assignment target".to_string(),
                         loc: lhs.loc,
                     });
                 }

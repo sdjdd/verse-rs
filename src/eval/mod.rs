@@ -48,7 +48,11 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
 fn eval_assignment(expr: &AssignmentExpr, ctx: &mut EvalContext) -> EvalResult {
     let value = eval(&expr.expr, ctx)?;
     if let Ok(value) = &value {
-        ctx.bindings.insert(expr.target.clone(), value.clone());
+        match &expr.target {
+            LValue::Id(id) => {
+                ctx.bindings.insert(id.name.clone(), value.clone());
+            }
+        }
     }
     Ok(value)
 }
