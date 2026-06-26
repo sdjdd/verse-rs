@@ -41,6 +41,7 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
         ExprKind::Template(expr) => eval_template(expr, ctx),
         ExprKind::CompareChain(expr) => eval_compare_chain(expr, ctx),
         ExprKind::Tuple(expr) => eval_tuple(expr, ctx),
+        ExprKind::Block(expr) => eval_block(expr, ctx),
     }
 }
 
@@ -264,6 +265,17 @@ fn eval_tuple(expr: &TupleExpr, ctx: &mut EvalContext) -> EvalResult {
         }
     }
     Ok(Ok(Value::Tuple(values)))
+}
+
+fn eval_block(expr: &BlockExpr, ctx: &mut EvalContext) -> EvalResult {
+    let mut result = Ok(Value::None);
+    for expr in &expr.body {
+        result = eval(expr, ctx)?;
+        if result.is_err() {
+            break;
+        }
+    }
+    Ok(result)
 }
 
 fn map_eval<F>(ctx: &mut EvalContext, expr: &Expression, op: F) -> EvalResult

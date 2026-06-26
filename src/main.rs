@@ -1,21 +1,65 @@
-use logos::Logos;
+use std::fs;
+
 use verse::eval::{EvalContext, eval};
-use verse::lexer::Token;
-use verse::parser::Parser;
+use verse::lexer::IndentAwareLexer;
+use verse::parser::{ParseError, Parser};
 use verse::runtime::Value;
 
 fn main() {
-    let source = r#"
-        X := 10
-        5 <= X <= 100 <= 1000 = 1001 - 1 > 1
-    "#;
-    let lexer = Token::lexer(source);
-    let mut parser = Parser::new(lexer);
+    let source = fs::read_to_string("test_nested.verse").unwrap();
+    let lexer = IndentAwareLexer::new(&source);
+    // for token in lexer.clone().into_iter() {
+    //     println!("{:?}", token)
+    // }
+    let mut parser = Parser::new(&source, lexer);
     let mut ctx = EvalContext::new();
+    let program = parser
+        .parse()
+        .map_err(|err| {
+            match &err {
+                ParseError::UnexpectedToken { span, .. } => {
+                    println!(
+                        "line,column 1 = {:?}",
+                        get_source_position(&source, span.start)
+                    );
+                    println!(
+                        "line,column 2 = {:?}",
+                        get_source_position(&source, span.end)
+                    );
+                }
+                _ => {}
+            };
+            err
+        })
+        .unwrap();
     let mut value = Ok(Value::None);
-    parser.parse().unwrap().expressions.iter().for_each(|expr| {
-        // println!("{:#?}", expr);
+    program.expressions.iter().for_each(|expr| {
         value = eval(expr, &mut ctx).unwrap();
     });
     println!("{:?}", value);
+}
+
+fn get_source_position(src: &str, offset: usize) -> Option<(usize, usize)> {
+    let mut line: usize = 1;
+    let mut col: usize = 1;
+    let mut ofst: usize = 0;
+
+    if offset == ofst {
+        return Some((line, col));
+    }
+
+    for ch in src.chars() {
+        ofst += ch.len_utf8();
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+        if offset == ofst {
+            return Some((line, col));
+        }
+    }
+
+    None
 }

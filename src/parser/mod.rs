@@ -2,8 +2,7 @@ use thiserror::Error;
 
 use crate::{
     ast::*,
-    lexer::{Lexer, Token},
-    parser::ParseError::SyntaxError,
+    lexer::{IndentAwareLexer, LexerError, Span, Token},
 };
 
 #[derive(Debug)]
@@ -13,123 +12,137 @@ pub struct Program {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("Unexpected token {token:?} at {pos}")]
-    UnexpectedToken {
-        token: Token,
-        expected: Option<Token>,
-        pos: Position,
-    },
+    #[error("Unexpected token {token:?} at {span:?}")]
+    UnexpectedToken { token: Token, span: Span },
 
-    #[error("Invalid token {token} at {pos}")]
-    InvalidToken { token: String, pos: Position },
+    #[error("Invalid token {token} at {span:?}")]
+    InvalidToken { token: String, span: Span },
 
     #[error("SyntaxError: {message} at {loc}")]
     SyntaxError { message: String, loc: SourceLoc },
+
+    #[error("LexerError: {inner:?} at {span:?}")]
+    LexerError { inner: LexerError, span: Span },
 }
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-pub struct Parser<'source> {
-    lexer: Lexer<'source>,
-    pos: Position,
+pub struct Parser<'src> {
+    source: &'src str,
+    lexer: IndentAwareLexer<'src>,
+    next_token: Option<Token>,
+    next_token_span: Span,
     current_token: Option<Token>,
-    current_token_pos: Position,
+    current_token_span: Span,
 }
 
-impl<'source> Parser<'source> {
-    pub fn new(lexer: Lexer<'source>) -> Self {
+impl<'src> Parser<'src> {
+    pub fn new(source: &'src str, lexer: IndentAwareLexer<'src>) -> Self {
         Self {
+            source,
             lexer,
-            pos: Position::default(),
+            next_token: None,
+            next_token_span: Default::default(),
             current_token: None,
-            current_token_pos: Position::default(),
+            current_token_span: Default::default(),
         }
+    }
+
+    fn slice(&self) -> &'src str {
+        &self.source[self.current_token_span.clone()]
     }
 
     fn peek(&mut self) -> ParseResult<Token> {
-        if let Some(token) = self.current_token {
+        if let Some(token) = self.next_token {
             return Ok(token);
         }
-        let token = self.next()?;
-        self.current_token = Some(token);
-        Ok(token)
+        let current_token = self.current_token;
+        let current_token_span = self.current_token_span.clone();
+        let next_token = self.next()?;
+        self.next_token = self.current_token;
+        self.next_token_span = self.current_token_span.clone();
+        self.current_token = current_token;
+        self.current_token_span = current_token_span;
+        Ok(next_token)
     }
 
     fn next(&mut self) -> ParseResult<Token> {
-        if let Some(token) = self.current_token.take() {
+        if let Some(token) = self.next_token.take() {
+            self.current_token = Some(token);
+            self.current_token_span = self.next_token_span.clone();
             return Ok(token);
         }
-        let token = loop {
-            self.current_token_pos = self.pos;
-            let token = match self.lexer.next() {
-                Some(token) => token.map_err(|_| ParseError::InvalidToken {
-                    token: self.lexer.slice().to_string(),
-                    pos: self.pos,
-                })?,
-                None => break Token::EOF,
+        loop {
+            let (token, span) = match self.lexer.next() {
+                Some((Ok(token), span)) => (token, span),
+                Some((Err(err), span)) => {
+                    return Err(ParseError::LexerError { inner: err, span });
+                }
+                None => (Token::EOF, 0..0),
             };
-            match token {
-                Token::Whitespace | Token::Tabs => {
-                    self.pos.col += self.lexer.slice().len();
-                    continue;
-                }
-                Token::Newline => {
-                    self.pos.ln += 1;
-                    self.pos.col = 1;
-                    continue;
-                }
-                _ => break token,
-            }
-        };
-        self.pos.col += self.lexer.slice().len();
-        Ok(token)
+
+            self.current_token = Some(token);
+            self.current_token_span = span;
+
+            break Ok(token);
+        }
     }
 
-    fn make_expr(&self, start: Position, kind: impl Into<ExprKind>) -> Expression {
+    fn make_expr(&self, start: Span, kind: impl Into<ExprKind>) -> Expression {
         Expression {
             loc: SourceLoc {
                 start,
-                end: self.pos,
+                end: self.current_token_span.clone(),
             },
             kind: kind.into(),
         }
     }
 
-    fn expect(&mut self, token: Token) -> ParseResult<()> {
-        match self.next() {
-            Ok(tk) => {
-                if token == tk {
-                    Ok(())
-                } else {
-                    Err(ParseError::UnexpectedToken {
-                        token: tk,
-                        expected: Some(token),
-                        pos: self.pos,
-                    })
-                }
-            }
-            Err(err) => Err(err),
+    fn unexpected_error(&self) -> ParseError {
+        ParseError::UnexpectedToken {
+            token: self.current_token.unwrap(),
+            span: self.current_token_span.clone(),
         }
     }
 
-    fn consume_if(&mut self, token: Token) -> bool {
-        match self.peek() {
-            Ok(tk) => {
+    fn expect(&mut self, token: Token) -> ParseResult<()> {
+        self.next().and_then(|actual| {
+            if token == actual {
+                Ok(())
+            } else {
+                Err(ParseError::UnexpectedToken {
+                    token: actual,
+                    span: self.current_token_span.clone(),
+                })
+            }
+        })
+    }
+
+    fn consume_if(&mut self, token: Token) -> ParseResult<bool> {
+        match self.peek()? {
+            tk => {
                 if tk == token {
-                    self.current_token.take();
-                    true
+                    self.current_token = self.next_token.take();
+                    self.current_token_span = self.next_token_span.clone();
+                    Ok(true)
                 } else {
-                    false
+                    Ok(false)
                 }
             }
-            Err(_) => false,
         }
+    }
+
+    fn skip_newlines(&mut self) -> ParseResult<()> {
+        while self.consume_if(Token::Newline)? {}
+        Ok(())
     }
 
     pub fn parse(&mut self) -> ParseResult<Program> {
+        self.skip_newlines()?;
         let mut expressions = Vec::new();
         while !matches!(self.peek()?, Token::EOF) {
             expressions.push(self.parse_expression()?);
+            self.skip_newlines()?;
         }
         Ok(Program { expressions })
     }
@@ -142,26 +155,26 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_assignment_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         let mut lhs = self.parse_compare_chain_expr()?;
-        while self.consume_if(Token::ColonEq) {
+        while self.consume_if(Token::ColonEq)? {
             let target = match &lhs.kind {
                 ExprKind::Id(expr) => expr.name.clone(),
                 _ => {
-                    return Err(SyntaxError {
+                    return Err(ParseError::SyntaxError {
                         message: "Invalid left-hand side in assignment".to_string(),
                         loc: lhs.loc,
                     });
                 }
             };
             let rhs = self.parse_expression()?;
-            lhs = self.make_expr(start, AssignmentExpr::new(target, rhs));
+            lhs = self.make_expr(start.clone(), AssignmentExpr::new(target, rhs));
         }
         Ok(lhs)
     }
 
     fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         let head = self.parse_additive_expr()?;
         let mut rest = Vec::new();
         loop {
@@ -186,7 +199,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_additive_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         let mut lhs = self.parse_multiplicative_expr()?;
         loop {
             let op = match self.peek()? {
@@ -196,13 +209,13 @@ impl<'source> Parser<'source> {
             };
             self.next().unwrap();
             let rhs = self.parse_multiplicative_expr()?;
-            lhs = self.make_expr(start, BinaryExpr::new(lhs, op, rhs));
+            lhs = self.make_expr(start.clone(), BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
     }
 
     fn parse_multiplicative_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         let mut lhs = self.parse_call_expr()?;
         loop {
             let op = match self.peek()? {
@@ -212,20 +225,20 @@ impl<'source> Parser<'source> {
             };
             self.next().unwrap();
             let rhs = self.parse_call_expr()?;
-            lhs = self.make_expr(start, BinaryExpr::new(lhs, op, rhs));
+            lhs = self.make_expr(start.clone(), BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
     }
 
     fn parse_call_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         let callee = self.parse_primary_expr()?;
-        if self.consume_if(Token::LParen) {
+        if self.consume_if(Token::LParen)? {
             let mut args = Vec::new();
-            while !self.consume_if(Token::RParen) {
+            while !self.consume_if(Token::RParen)? {
                 let expr = self.parse_additive_expr()?;
                 args.push(expr);
-                self.consume_if(Token::Comma);
+                self.consume_if(Token::Comma)?;
             }
             Ok(self.make_expr(start, CallExpr::new(callee, args)))
         } else {
@@ -234,19 +247,92 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_if_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         self.expect(Token::If)?;
-        self.expect(Token::LParen)?;
-        let test = self.parse_expression()?;
-        self.expect(Token::RParen)?;
-        self.expect(Token::Then)?;
-        let consequent = self.parse_expression()?;
-        let alternate = if self.consume_if(Token::Else) {
-            Some(self.parse_expression()?)
-        } else {
-            None
+
+        let (test, consequent, alternate) = match self.next()? {
+            Token::LParen => {
+                let test = self.parse_expression()?;
+                self.expect(Token::RParen)?;
+                let (consequent, alternate) = match self.next()? {
+                    // if (test):
+                    //     consequent
+                    // else:
+                    //     alternate
+                    Token::Colon => {
+                        self.expect(Token::Newline)?;
+                        let consequent = self.parse_block()?;
+                        let alternate = if self.consume_if(Token::Else)? {
+                            self.expect(Token::Colon)?;
+                            self.expect(Token::Newline)?;
+                            let alternate = self.parse_block()?;
+                            Some(alternate)
+                        } else {
+                            None
+                        };
+                        (consequent, alternate)
+                    }
+                    // if (test) then consequent else alternate
+                    Token::Then => {
+                        let consequent = self.parse_expression()?;
+                        let alternate = if self.consume_if(Token::Else)? {
+                            Some(self.parse_expression()?)
+                        } else {
+                            None
+                        };
+                        (consequent, alternate)
+                    }
+                    _ => {
+                        return Err(self.unexpected_error());
+                    }
+                };
+                (test, consequent, alternate)
+            }
+            // if:
+            //     test
+            // then:
+            //     consequent
+            // else:
+            //     alternate
+            Token::Colon => {
+                self.expect(Token::Newline)?;
+                let test = self.parse_block()?;
+                self.expect(Token::Then)?;
+                self.expect(Token::Colon)?;
+                self.expect(Token::Newline)?;
+                let consequent = self.parse_block()?;
+                let alternate = if self.consume_if(Token::Else)? {
+                    self.expect(Token::Colon)?;
+                    self.expect(Token::Newline)?;
+                    let alternate = self.parse_block()?;
+                    Some(alternate)
+                } else {
+                    None
+                };
+                (test, consequent, alternate)
+            }
+            _ => {
+                return Err(self.unexpected_error());
+            }
         };
+
         Ok(self.make_expr(start, IfExpr::new(test, consequent, alternate)))
+    }
+
+    fn parse_block(&mut self) -> ParseResult<Expression> {
+        self.skip_newlines()?;
+        let start = self.current_token_span.clone();
+        self.expect(Token::Indent)?;
+        let mut body = Vec::new();
+        loop {
+            if matches!(self.peek()?, Token::Dedent | Token::EOF) {
+                self.next().unwrap();
+                break;
+            }
+            body.push(self.parse_expression()?);
+            self.skip_newlines()?;
+        }
+        Ok(self.make_expr(start, BlockExpr::new(body)))
     }
 
     fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
@@ -260,14 +346,14 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         self.expect(Token::Ident)?;
-        let name = self.lexer.slice().to_string();
+        let name = self.slice().to_string();
         Ok(self.make_expr(start, IdentifierExpr::new(name)))
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         let expr = match self.next()? {
             Token::IntegerLiteral => self.parse_integer_literal()?,
             Token::FloatLiteral => self.parse_float_literal()?,
@@ -275,22 +361,19 @@ impl<'source> Parser<'source> {
             Token::Char32Literal => self.parse_char32_literal()?,
             Token::True => LiteralExpr::Bool(true),
             Token::False => LiteralExpr::Bool(false),
-            Token::StringLiteral => LiteralExpr::String(
-                self.escape_string_literal(&self.lexer.slice()[1..self.lexer.slice().len() - 1]),
-            ),
-            token => {
-                return Err(ParseError::UnexpectedToken {
-                    token,
-                    expected: None,
-                    pos: self.current_token_pos,
-                });
+            Token::StringLiteral => {
+                let s = self.slice();
+                LiteralExpr::String(self.escape_string_literal(&s[1..s.len() - 1]))
+            }
+            _ => {
+                return Err(self.unexpected_error());
             }
         };
         Ok(self.make_expr(start, expr))
     }
 
     fn parse_integer_literal(&mut self) -> ParseResult<LiteralExpr> {
-        let mut src = self.lexer.slice();
+        let mut src = self.slice();
         let mut radix = 10;
         if src.starts_with("0x") {
             src = &src[2..];
@@ -300,12 +383,12 @@ impl<'source> Parser<'source> {
             .map(LiteralExpr::Integer)
             .map_err(|_| ParseError::InvalidToken {
                 token: "Invalid integer literal".to_string(),
-                pos: self.current_token_pos,
+                span: self.current_token_span.clone(),
             })
     }
 
     fn parse_float_literal(&mut self) -> ParseResult<LiteralExpr> {
-        let mut src = self.lexer.slice();
+        let mut src = self.slice();
         if src.ends_with("f64") {
             src = &src[..src.len() - 3];
         }
@@ -313,12 +396,12 @@ impl<'source> Parser<'source> {
             .map(LiteralExpr::Float)
             .map_err(|_| ParseError::InvalidToken {
                 token: "Invalid float literal".to_string(),
-                pos: self.current_token_pos,
+                span: self.current_token_span.clone(),
             })
     }
 
     fn parse_char_literal(&mut self) -> ParseResult<LiteralExpr> {
-        let mut src = self.lexer.slice();
+        let mut src = self.slice();
         if src.starts_with("0o") {
             return Ok(LiteralExpr::Char(
                 u8::from_str_radix(&src[2..], 16).unwrap(),
@@ -334,7 +417,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_char32_literal(&mut self) -> ParseResult<LiteralExpr> {
-        let src = self.lexer.slice();
+        let src = self.slice();
         let ch = if src.starts_with("0u") {
             let value = u32::from_str_radix(&src[2..], 16).unwrap();
             std::char::from_u32(value).unwrap()
@@ -345,10 +428,10 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_template_expression(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         self.expect(Token::TemplateHead)?;
         let mut elements = Vec::new();
-        let src = self.lexer.slice();
+        let src = self.slice();
         elements.push(TemplateElement::Raw(
             self.escape_string_literal(&src[1..src.len() - 1]),
         ));
@@ -356,7 +439,7 @@ impl<'source> Parser<'source> {
             match self.peek()? {
                 Token::TemplateMiddle => {
                     self.next().unwrap();
-                    let src = self.lexer.slice();
+                    let src = self.slice();
                     elements.push(TemplateElement::Raw(
                         self.escape_string_literal(&src[1..src.len() - 1]),
                     ));
@@ -366,14 +449,14 @@ impl<'source> Parser<'source> {
             }
         }
         self.expect(Token::TemplateTail)?;
-        let src = self.lexer.slice();
+        let src = self.slice();
         elements.push(TemplateElement::Raw(
             self.escape_string_literal(&src[1..src.len() - 1]),
         ));
         Ok(self.make_expr(start, TemplateExpression::new(elements)))
     }
 
-    fn escape_string_literal(&mut self, src: &str) -> String {
+    fn escape_string_literal(&self, src: &str) -> String {
         let mut chars = Vec::new();
         let mut escaped = false;
         for mut ch in src.chars() {
@@ -391,24 +474,20 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_tuple_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.pos;
+        let start = self.current_token_span.clone();
         self.expect(Token::LParen)?;
         let expr = self.parse_expression()?;
         match self.next()? {
             Token::Comma => {
                 let mut elements = vec![expr];
-                while !self.consume_if(Token::RParen) {
+                while !self.consume_if(Token::RParen)? {
                     elements.push(self.parse_expression()?);
-                    self.consume_if(Token::Comma);
+                    self.consume_if(Token::Comma)?;
                 }
                 Ok(self.make_expr(start, TupleExpr::new(elements)))
             }
             Token::RParen => Ok(expr),
-            token => Err(ParseError::UnexpectedToken {
-                token,
-                expected: None,
-                pos: self.current_token_pos,
-            }),
+            _ => Err(self.unexpected_error()),
         }
     }
 }

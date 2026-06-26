@@ -1,6 +1,8 @@
+use core::ops::Range;
+
 use derive_more::{Constructor, From};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -24,15 +26,15 @@ impl std::fmt::Display for Position {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SourceLoc {
-    pub start: Position,
-    pub end: Position,
+    pub start: Range<usize>,
+    pub end: Range<usize>,
 }
 
 impl std::fmt::Display for SourceLoc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}-{}", self.start, self.end)
+        write!(f, "{:?}-{:?}", self.start, self.end)
     }
 }
 
@@ -53,6 +55,7 @@ pub enum ExprKind {
     Template(TemplateExpression),
     CompareChain(CompareChainExpr),
     Tuple(TupleExpr),
+    Block(BlockExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -181,4 +184,9 @@ impl CompareChainExpr {
 #[derive(Debug, Clone, Constructor)]
 pub struct TupleExpr {
     pub elements: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct BlockExpr {
+    pub body: Vec<Expression>,
 }
