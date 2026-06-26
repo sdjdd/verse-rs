@@ -139,7 +139,7 @@ pub type Lexer<'src> = logos::Lexer<'src, Token>;
 
 pub type Span = Range<usize>;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum IndentType {
     Space,
     Tab,
@@ -209,14 +209,27 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                 }
                 Token::Whitespaces | Token::Tabs => {
                     if self.at_line_start {
-                        self.current_indent = Some(IndentInfo {
-                            typ: match token {
-                                Token::Whitespaces => IndentType::Space,
-                                Token::Tabs => IndentType::Tab,
-                                _ => unreachable!(),
-                            },
-                            span: span.clone(),
-                        })
+                        let new_typ = match token {
+                            Token::Whitespaces => IndentType::Space,
+                            Token::Tabs => IndentType::Tab,
+                            _ => unreachable!(),
+                        };
+
+                        if let Some(indent) = &self.current_indent {
+                            // Check for inconsistency with existing indent
+                            if indent.typ != new_typ {
+                                self.has_error = true;
+                                return Some((Err(LexerError::InconsistentIndent), span));
+                            }
+                            // Extend the span
+                            self.current_indent.as_mut().unwrap().span.end = span.end;
+                        } else {
+                            // First whitespace on this line
+                            self.current_indent = Some(IndentInfo {
+                                typ: new_typ,
+                                span: span.clone(),
+                            });
+                        }
                     } else if let Some(indent) = self.current_indent.as_mut() {
                         indent.span.end = span.end;
                         match (indent.typ, token) {
@@ -289,5 +302,194 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
         }
 
         self.pending.pop_front()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lex(source: &str) -> Vec<(Result<Token, LexerError>, Span)> {
+        IndentAwareLexer::new(source).collect()
+    }
+
+    fn lex_ok(source: &str) -> Vec<Token> {
+        lex(source)
+            .into_iter()
+            .filter_map(|(r, _)| r.ok())
+            .collect()
+    }
+
+    #[test]
+    fn test_basic_tokens() {
+        let tokens = lex_ok("x := 42");
+        assert_eq!(
+            tokens,
+            vec![Token::Id, Token::ColonEq, Token::IntegerLiteral]
+        );
+    }
+
+    #[test]
+    fn test_indentation() {
+        let source = "if:\n    x\ny";
+        let tokens = lex_ok(source);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::If,
+                Token::Colon,
+                Token::Newline,
+                Token::Indent,
+                Token::Id,
+                Token::Newline,
+                Token::Dedent,
+                Token::Id,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_nested_indentation() {
+        let source = "if:\n    if:\n        x\n    y\nz";
+        let tokens = lex_ok(source);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::If,
+                Token::Colon,
+                Token::Newline,
+                Token::Indent,
+                Token::If,
+                Token::Colon,
+                Token::Newline,
+                Token::Indent,
+                Token::Id,
+                Token::Newline,
+                Token::Dedent,
+                Token::Id,
+                Token::Newline,
+                Token::Dedent,
+                Token::Id,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_inconsistent_indent() {
+        let source = "if:\n \tx";
+        let results = lex(source);
+        assert!(
+            results
+                .iter()
+                .any(|(r, _)| matches!(r, Err(LexerError::InconsistentIndent)))
+        );
+    }
+
+    #[test]
+    fn test_keywords() {
+        let tokens = lex_ok("if then else true false");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::If,
+                Token::Then,
+                Token::Else,
+                Token::True,
+                Token::False
+            ]
+        );
+    }
+
+    #[test]
+    fn test_operators() {
+        let tokens = lex_ok("+ - * / = <> < <= > >=");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Plus,
+                Token::Minus,
+                Token::Star,
+                Token::Slash,
+                Token::Eq,
+                Token::NotEq,
+                Token::Less,
+                Token::LessEq,
+                Token::Greater,
+                Token::GreaterEq,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_string_literal() {
+        let tokens = lex_ok(r#""hello world""#);
+        assert_eq!(tokens, vec![Token::StringLiteral]);
+    }
+
+    #[test]
+    fn test_template_string() {
+        let tokens = lex_ok(r#""hello {name}""#);
+        assert_eq!(
+            tokens,
+            vec![Token::TemplateHead, Token::Id, Token::TemplateTail,]
+        );
+    }
+
+    #[test]
+    fn test_integer_literals() {
+        let tokens = lex_ok("42 0xFF");
+        assert_eq!(tokens, vec![Token::IntegerLiteral, Token::IntegerLiteral]);
+    }
+
+    #[test]
+    fn test_float_literal() {
+        let tokens = lex_ok("3.14 1.5e10");
+        assert_eq!(tokens, vec![Token::FloatLiteral, Token::FloatLiteral]);
+    }
+
+    #[test]
+    fn test_char_literal() {
+        let tokens = lex_ok("'a' '\\n'");
+        assert_eq!(tokens, vec![Token::CharLiteral, Token::CharLiteral]);
+    }
+
+    #[test]
+    fn test_identifier() {
+        let tokens = lex_ok("foo bar123 _private");
+        assert_eq!(tokens, vec![Token::Id, Token::Id, Token::Id]);
+    }
+
+    #[test]
+    fn test_punctuation() {
+        let tokens = lex_ok("( ) , :");
+        assert_eq!(
+            tokens,
+            vec![Token::LParen, Token::RParen, Token::Comma, Token::Colon]
+        );
+    }
+
+    #[test]
+    fn test_empty_lines() {
+        let source = "x\n\n\ny";
+        let tokens = lex_ok(source);
+        assert_eq!(tokens, vec![Token::Id, Token::Newline, Token::Id]);
+    }
+
+    #[test]
+    fn test_multiple_statements() {
+        let source = "x := 1\ny := 2";
+        let tokens = lex_ok(source);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Id,
+                Token::ColonEq,
+                Token::IntegerLiteral,
+                Token::Newline,
+                Token::Id,
+                Token::ColonEq,
+                Token::IntegerLiteral,
+            ]
+        );
     }
 }
