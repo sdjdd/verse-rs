@@ -90,10 +90,7 @@ impl<'src> Parser<'src> {
 
     fn make_expr(&self, start: Span, kind: impl Into<ExprKind>) -> Expression {
         Expression {
-            loc: SourceLoc {
-                start,
-                end: self.current_token_span.clone(),
-            },
+            loc: SourceLoc(start.start..self.current_token_span.end),
             kind: kind.into(),
         }
     }

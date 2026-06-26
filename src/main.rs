@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 
 use verse::eval::{EvalContext, eval};
@@ -6,7 +7,14 @@ use verse::parser::{ParseError, Parser};
 use verse::runtime::Value;
 
 fn main() {
-    let source = fs::read_to_string("test_nested.verse").unwrap();
+    let args: Vec<String> = env::args().collect();
+    let filename = if args.len() > 1 {
+        &args[1]
+    } else {
+        "test.verse"
+    };
+
+    let source = fs::read_to_string(filename).unwrap();
     let lexer = IndentAwareLexer::new(&source);
     // for token in lexer.clone().into_iter() {
     //     println!("{:?}", token)

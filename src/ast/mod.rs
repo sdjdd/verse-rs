@@ -2,12 +2,6 @@ use core::ops::Range;
 
 use derive_more::{Constructor, From};
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct Position {
     pub ln: usize,
@@ -27,14 +21,11 @@ impl std::fmt::Display for Position {
 }
 
 #[derive(Debug, Clone)]
-pub struct SourceLoc {
-    pub start: Range<usize>,
-    pub end: Range<usize>,
-}
+pub struct SourceLoc(pub Range<usize>);
 
 impl std::fmt::Display for SourceLoc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}-{:?}", self.start, self.end)
+        write!(f, "{}..{}", self.0.start, self.0.end)
     }
 }
 
