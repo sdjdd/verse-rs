@@ -1,6 +1,6 @@
-use core::ops::Range;
-
 use derive_more::{Constructor, From};
+
+use crate::lexer::Span;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Position {
@@ -21,18 +21,9 @@ impl std::fmt::Display for Position {
 }
 
 #[derive(Debug, Clone)]
-pub struct SourceLoc(pub Range<usize>);
-
-impl std::fmt::Display for SourceLoc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}..{}", self.0.start, self.0.end)
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct Expression {
-    pub loc: SourceLoc,
     pub kind: ExprKind,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, From)]
@@ -65,8 +56,28 @@ pub struct IdentifierExpr {
 }
 
 #[derive(Debug, Clone)]
-pub enum LValue {
+pub enum LValueKind {
     Id(IdentifierExpr),
+}
+
+#[derive(Debug, Clone)]
+pub struct LValue {
+    pub kind: LValueKind,
+    pub span: Span,
+}
+
+impl TryFrom<Expression> for LValue {
+    type Error = Expression;
+
+    fn try_from(value: Expression) -> Result<Self, Self::Error> {
+        match value.kind {
+            ExprKind::Id(id) => Ok(Self {
+                kind: LValueKind::Id(id),
+                span: value.span,
+            }),
+            _ => Err(value),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -18,8 +18,8 @@ pub enum ParseError {
     #[error("Invalid token {token} at {span:?}")]
     InvalidToken { token: String, span: Span },
 
-    #[error("SyntaxError: {message} at {loc}")]
-    SyntaxError { message: String, loc: SourceLoc },
+    #[error("SyntaxError: {message} at {span:?}")]
+    SyntaxError { message: String, span: Span },
 
     #[error("LexerError: {inner:?} at {span:?}")]
     LexerError { inner: LexerError, span: Span },
@@ -90,7 +90,7 @@ impl<'src> Parser<'src> {
 
     fn make_expr(&self, start: Span, kind: impl Into<ExprKind>) -> Expression {
         Expression {
-            loc: SourceLoc(start.start..self.current_token_span.end),
+            span: start.start..self.current_token_span.end,
             kind: kind.into(),
         }
     }
@@ -155,15 +155,12 @@ impl<'src> Parser<'src> {
         let start = self.current_token_span.clone();
         let mut lhs = self.parse_compare_chain_expr()?;
         while self.consume_if(Token::ColonEq)? {
-            let target = match lhs.kind {
-                ExprKind::Id(id) => LValue::Id(id),
-                _ => {
-                    return Err(ParseError::SyntaxError {
+            let target: LValue =
+                lhs.try_into()
+                    .map_err(|e: Expression| ParseError::SyntaxError {
                         message: "Invalid assignment target".to_string(),
-                        loc: lhs.loc,
-                    });
-                }
-            };
+                        span: e.span,
+                    })?;
             let rhs = self.parse_expression()?;
             lhs = self.make_expr(start.clone(), AssignmentExpr::new(target, rhs));
         }
