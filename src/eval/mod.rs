@@ -58,15 +58,10 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_assignment(expr: &AssignmentExpr, ctx: &mut EvalContext) -> EvalResult {
-    let value = eval(&expr.expr, ctx)?;
-    if let Ok(value) = &value {
-        match &expr.target.kind {
-            LValueKind::Id(id) => {
-                ctx.bindings.insert(id.symbol, value.clone());
-            }
-        }
-    }
-    Ok(value)
+    eval_set(
+        &SetExpr::new(expr.target.clone(), *expr.expr.clone()),
+        ctx,
+    )
 }
 
 fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> EvalResult {
