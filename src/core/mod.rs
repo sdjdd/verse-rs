@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-pub type Symbol = usize;
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct Symbol(pub(crate) usize);
 
 #[derive(Clone, Default)]
 pub struct SymbolTable {
@@ -18,13 +19,13 @@ impl SymbolTable {
             return id;
         }
 
-        let id = self.vec.len();
+        let id = Symbol(self.vec.len());
         self.map.insert(name.to_string(), id);
         self.vec.push(name.to_string());
         id
     }
 
     pub fn resolve(&self, symbol: Symbol) -> &str {
-        self.vec.get(symbol).unwrap()
+        self.vec.get(symbol.0).unwrap()
     }
 }

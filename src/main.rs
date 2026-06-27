@@ -6,6 +6,7 @@ use verse::eval::{EvalContext, eval};
 use verse::lexer::IndentAwareLexer;
 use verse::parser::{ParseError, Parser};
 use verse::runtime::Value;
+use verse::semantic::{SemanticContext, check_expr, resolve_expr_type};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -40,6 +41,15 @@ fn main() {
             err
         })
         .unwrap();
+
+    let mut semantic_ctx = SemanticContext::new();
+    for expr in &program.expressions {
+        resolve_expr_type(expr, &mut semantic_ctx);
+    }
+    for expr in &program.expressions {
+        check_expr(expr, &mut semantic_ctx).unwrap();
+    }
+
     let mut ctx = EvalContext::new(parser.get_symbol_table());
     let mut value = Ok(Value::Void);
     program.expressions.iter().for_each(|expr| {

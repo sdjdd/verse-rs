@@ -2,8 +2,12 @@ use derive_more::{Constructor, From};
 
 use crate::{core::Symbol, lexer::Span};
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct ExprId(pub(crate) usize);
+
 #[derive(Debug, Clone)]
 pub struct Expression {
+    pub id: ExprId,
     pub kind: ExprKind,
     pub span: Span,
 }

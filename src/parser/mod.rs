@@ -37,6 +37,8 @@ pub struct Parser<'src> {
     current_token_span: Span,
 
     symbol_table: SymbolTable,
+
+    next_expr_id: usize,
 }
 
 impl<'src> Parser<'src> {
@@ -49,6 +51,7 @@ impl<'src> Parser<'src> {
             current_token: None,
             current_token_span: Default::default(),
             symbol_table: SymbolTable::new(),
+            next_expr_id: 0,
         }
     }
 
@@ -96,8 +99,15 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn make_expr(&self, start: Span, kind: impl Into<ExprKind>) -> Expression {
+    fn generate_expr_id(&mut self) -> ExprId {
+        let id = self.next_expr_id;
+        self.next_expr_id += 1;
+        ExprId(id)
+    }
+
+    fn make_expr(&mut self, start: Span, kind: impl Into<ExprKind>) -> Expression {
         Expression {
+            id: self.generate_expr_id(),
             span: start.start..self.current_token_span.end,
             kind: kind.into(),
         }
