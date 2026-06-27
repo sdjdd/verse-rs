@@ -12,7 +12,12 @@ pub struct Expression {
 pub enum ExprKind {
     Id(IdentifierExpr),
     Assign(AssignmentExpr),
-    Literal(LiteralExpr),
+    Integer(i64),
+    Float(f64),
+    Char(u8),
+    Char32(char),
+    String(String),
+    Logic(bool),
     Call(CallExpr),
     Binary(BinaryExpr),
     If(IfExpr),
@@ -20,16 +25,6 @@ pub enum ExprKind {
     CompareChain(CompareChainExpr),
     Tuple(TupleExpr),
     Block(BlockExpr),
-}
-
-#[derive(Debug, Clone)]
-pub enum LiteralExpr {
-    Integer(i64),
-    Float(f64),
-    Char(u8),
-    Char32(char),
-    String(String),
-    Bool(bool),
 }
 
 #[derive(Debug, Clone, Constructor)]

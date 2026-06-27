@@ -353,11 +353,11 @@ impl<'src> Parser<'src> {
             Token::FloatLiteral => self.parse_float_literal()?,
             Token::CharLiteral => self.parse_char_literal()?,
             Token::Char32Literal => self.parse_char32_literal()?,
-            Token::True => LiteralExpr::Bool(true),
-            Token::False => LiteralExpr::Bool(false),
+            Token::True => ExprKind::Logic(true),
+            Token::False => ExprKind::Logic(false),
             Token::StringLiteral => {
                 let s = self.slice();
-                LiteralExpr::String(self.escape_string_literal(&s[1..s.len() - 1]))
+                ExprKind::String(self.escape_string_literal(&s[1..s.len() - 1]))
             }
             _ => {
                 return Err(self.unexpected_error());
@@ -366,7 +366,7 @@ impl<'src> Parser<'src> {
         Ok(self.make_expr(start, expr))
     }
 
-    fn parse_integer_literal(&mut self) -> ParseResult<LiteralExpr> {
+    fn parse_integer_literal(&mut self) -> ParseResult<ExprKind> {
         let mut src = self.slice();
         let mut radix = 10;
         if src.starts_with("0x") {
@@ -374,30 +374,30 @@ impl<'src> Parser<'src> {
             radix = 16;
         }
         i64::from_str_radix(src, radix)
-            .map(LiteralExpr::Integer)
+            .map(ExprKind::Integer)
             .map_err(|_| ParseError::InvalidToken {
                 token: "Invalid integer literal".to_string(),
                 span: self.current_token_span.clone(),
             })
     }
 
-    fn parse_float_literal(&mut self) -> ParseResult<LiteralExpr> {
+    fn parse_float_literal(&mut self) -> ParseResult<ExprKind> {
         let mut src = self.slice();
         if src.ends_with("f64") {
             src = &src[..src.len() - 3];
         }
         src.parse::<f64>()
-            .map(LiteralExpr::Float)
+            .map(ExprKind::Float)
             .map_err(|_| ParseError::InvalidToken {
                 token: "Invalid float literal".to_string(),
                 span: self.current_token_span.clone(),
             })
     }
 
-    fn parse_char_literal(&mut self) -> ParseResult<LiteralExpr> {
+    fn parse_char_literal(&mut self) -> ParseResult<ExprKind> {
         let mut src = self.slice();
         if src.starts_with("0o") {
-            return Ok(LiteralExpr::Char(
+            return Ok(ExprKind::Char(
                 u8::from_str_radix(&src[2..], 16).unwrap(),
             ));
         }
@@ -407,10 +407,10 @@ impl<'src> Parser<'src> {
         } else {
             src.bytes().next().unwrap()
         };
-        Ok(LiteralExpr::Char(ch))
+        Ok(ExprKind::Char(ch))
     }
 
-    fn parse_char32_literal(&mut self) -> ParseResult<LiteralExpr> {
+    fn parse_char32_literal(&mut self) -> ParseResult<ExprKind> {
         let src = self.slice();
         let ch = if src.starts_with("0u") {
             let value = u32::from_str_radix(&src[2..], 16).unwrap();
@@ -418,7 +418,7 @@ impl<'src> Parser<'src> {
         } else {
             src.chars().nth(1).unwrap()
         };
-        Ok(LiteralExpr::Char32(ch))
+        Ok(ExprKind::Char32(ch))
     }
 
     fn parse_template_expression(&mut self) -> ParseResult<Expression> {

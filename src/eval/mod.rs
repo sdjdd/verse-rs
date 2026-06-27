@@ -33,7 +33,12 @@ impl EvalContext {
 pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
     match &expr.kind {
         ExprKind::Call(expr) => eval_call(expr, ctx),
-        ExprKind::Literal(expr) => eval_literal(expr, ctx),
+        ExprKind::Integer(value) => Ok(Ok(Value::Integer(*value))),
+        ExprKind::Float(value) => Ok(Ok(Value::Float(*value))),
+        ExprKind::Char(value) => Ok(Ok(Value::Char(*value))),
+        ExprKind::Char32(value) => Ok(Ok(Value::Char32(*value))),
+        ExprKind::String(value) => Ok(Ok(Value::String(value.clone()))),
+        ExprKind::Logic(value) => Ok(Ok(Value::Logic(*value))),
         ExprKind::Assign(expr) => eval_assignment(expr, ctx),
         ExprKind::Id(expr) => eval_identifier(expr, ctx),
         ExprKind::Binary(expr) => eval_binary(expr, ctx),
@@ -66,18 +71,6 @@ fn eval_identifier(expr: &IdentifierExpr, ctx: &mut EvalContext) -> EvalResult {
             expr.name
         )))
     }
-}
-
-fn eval_literal(expr: &LiteralExpr, _ctx: &mut EvalContext) -> EvalResult {
-    let value = match expr {
-        LiteralExpr::Integer(value) => Value::Integer(*value),
-        LiteralExpr::Float(value) => Value::Float(*value),
-        LiteralExpr::Char(value) => Value::Char(*value),
-        LiteralExpr::Char32(value) => Value::Char32(*value),
-        LiteralExpr::String(value) => Value::String(value.clone()),
-        LiteralExpr::Bool(value) => Value::Logic(*value),
-    };
-    Ok(Ok(value))
 }
 
 fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
