@@ -40,6 +40,7 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
         ExprKind::String(value) => Ok(Ok(Value::String(value.clone()))),
         ExprKind::Logic(value) => Ok(Ok(Value::Logic(*value))),
         ExprKind::Assign(expr) => eval_assignment(expr, ctx),
+        ExprKind::Set(expr) => eval_set(expr, ctx),
         ExprKind::Id(expr) => eval_identifier(expr, ctx),
         ExprKind::Binary(expr) => eval_binary(expr, ctx),
         ExprKind::If(expr) => eval_if(expr, ctx),
@@ -51,6 +52,18 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_assignment(expr: &AssignmentExpr, ctx: &mut EvalContext) -> EvalResult {
+    let value = eval(&expr.expr, ctx)?;
+    if let Ok(value) = &value {
+        match &expr.target.kind {
+            LValueKind::Id(id) => {
+                ctx.bindings.insert(id.name.clone(), value.clone());
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> EvalResult {
     let value = eval(&expr.expr, ctx)?;
     if let Ok(value) = &value {
         match &expr.target.kind {

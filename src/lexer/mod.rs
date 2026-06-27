@@ -124,6 +124,9 @@ pub enum Token {
     #[token("else")]
     Else,
 
+    #[token("set")]
+    Set,
+
     #[regex("[A-Za-z][A-Za-z0-9_]*")]
     #[regex("_[A-Za-z0-9_]+")]
     Id,
@@ -387,16 +390,27 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = lex_ok("if then else true false");
+        let tokens = lex_ok("if then else set true false");
         assert_eq!(
             tokens,
             vec![
                 Token::If,
                 Token::Then,
                 Token::Else,
+                Token::Set,
                 Token::True,
                 Token::False
             ]
+        );
+    }
+
+    #[test]
+    fn test_set_expression() {
+        let source = "set X = 10";
+        let tokens = lex_ok(source);
+        assert_eq!(
+            tokens,
+            vec![Token::Set, Token::Id, Token::Eq, Token::IntegerLiteral]
         );
     }
 

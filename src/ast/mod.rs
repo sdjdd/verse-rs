@@ -12,6 +12,7 @@ pub struct Expression {
 pub enum ExprKind {
     Id(IdentifierExpr),
     Assign(AssignmentExpr),
+    Set(SetExpr),
     Integer(i64),
     Float(f64),
     Char(u8),
@@ -64,6 +65,21 @@ pub struct AssignmentExpr {
 }
 
 impl AssignmentExpr {
+    pub fn new(target: LValue, expr: Expression) -> Self {
+        Self {
+            target,
+            expr: expr.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SetExpr {
+    pub target: LValue,
+    pub expr: Box<Expression>,
+}
+
+impl SetExpr {
     pub fn new(target: LValue, expr: Expression) -> Self {
         Self {
             target,

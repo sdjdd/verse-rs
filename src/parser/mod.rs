@@ -147,6 +147,7 @@ impl<'src> Parser<'src> {
     fn parse_expression(&mut self) -> ParseResult<Expression> {
         match self.peek()? {
             Token::If => self.parse_if_expr(),
+            Token::Set => self.parse_set_expr(),
             _ => self.parse_assignment_expr(),
         }
     }
@@ -165,6 +166,24 @@ impl<'src> Parser<'src> {
             lhs = self.make_expr(start.clone(), AssignmentExpr::new(target, rhs));
         }
         Ok(lhs)
+    }
+
+    fn parse_set_expr(&mut self) -> ParseResult<Expression> {
+        let start = self.current_token_span.clone();
+        self.expect(Token::Set)?;
+        
+        let target_expr = self.parse_primary_expr()?;
+        let target: LValue = target_expr.try_into().map_err(|e: Expression| {
+            ParseError::SyntaxError {
+                message: "Invalid set target".to_string(),
+                span: e.span,
+            }
+        })?;
+        
+        self.expect(Token::Eq)?;
+        let expr = self.parse_expression()?;
+        
+        Ok(self.make_expr(start, SetExpr::new(target, expr)))
     }
 
     fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {
