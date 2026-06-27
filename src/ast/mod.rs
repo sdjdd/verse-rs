@@ -11,7 +11,8 @@ pub struct Expression {
 #[derive(Debug, Clone, From)]
 pub enum ExprKind {
     Id(IdentifierExpr),
-    Assign(AssignmentExpr),
+    Decl(DeclarationExpr),
+    VarDecl(VarDeclExpr),
     Set(SetExpr),
     Integer(i64),
     Float(f64),
@@ -71,18 +72,18 @@ impl TryFrom<Expression> for LValue {
 }
 
 #[derive(Debug, Clone)]
-pub struct AssignmentExpr {
+pub struct DeclarationExpr {
     pub target: LValue,
     pub typ: Option<TypeExpr>,
-    pub expr: Box<Expression>,
+    pub value: Box<Expression>,
 }
 
-impl AssignmentExpr {
-    pub fn new(target: LValue, typ: Option<TypeExpr>, expr: Expression) -> Self {
+impl DeclarationExpr {
+    pub fn new(target: LValue, typ: Option<TypeExpr>, value: Expression) -> Self {
         Self {
             target,
             typ,
-            expr: expr.into(),
+            value: value.into(),
         }
     }
 }
@@ -97,6 +98,23 @@ impl SetExpr {
     pub fn new(target: LValue, expr: Expression) -> Self {
         Self {
             target,
+            expr: expr.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VarDeclExpr {
+    pub name: IdentifierExpr,
+    pub typ: TypeExpr,
+    pub expr: Box<Expression>,
+}
+
+impl VarDeclExpr {
+    pub fn new(name: IdentifierExpr, typ: TypeExpr, expr: Expression) -> Self {
+        Self {
+            name,
+            typ,
             expr: expr.into(),
         }
     }

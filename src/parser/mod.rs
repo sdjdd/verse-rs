@@ -156,7 +156,8 @@ impl<'src> Parser<'src> {
         match self.peek()? {
             Token::If => self.parse_if_expr(),
             Token::Set => self.parse_set_expr(),
-            _ => self.parse_assignment_expr(),
+            Token::Var => self.parse_var_decl(),
+            _ => self.parse_declaration_expr(),
         }
     }
 
@@ -185,7 +186,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_assignment_expr(&mut self) -> ParseResult<Expression> {
+    fn parse_declaration_expr(&mut self) -> ParseResult<Expression> {
         let start = self.current_token_span.clone();
         let mut lhs = self.parse_compare_chain_expr()?;
 
@@ -212,7 +213,7 @@ impl<'src> Parser<'src> {
                     })?;
 
             let rhs = self.parse_expression()?;
-            lhs = self.make_expr(start.clone(), AssignmentExpr::new(target, typ, rhs));
+            lhs = self.make_expr(start.clone(), DeclarationExpr::new(target, typ, rhs));
         }
 
         Ok(lhs)
@@ -235,6 +236,23 @@ impl<'src> Parser<'src> {
         let expr = self.parse_expression()?;
 
         Ok(self.make_expr(start, SetExpr::new(target, expr)))
+    }
+
+    fn parse_var_decl(&mut self) -> ParseResult<Expression> {
+        let start = self.current_token_span.clone();
+        self.expect(Token::Var)?;
+
+        self.expect(Token::Id)?;
+        let symbol = self.symbol_table.intern(self.slice());
+        let name = IdentifierExpr::new(symbol);
+
+        self.expect(Token::Colon)?;
+        let typ = self.parse_type_expr()?;
+
+        self.expect(Token::Eq)?;
+        let expr = self.parse_expression()?;
+
+        Ok(self.make_expr(start, VarDeclExpr::new(name, typ, expr)))
     }
 
     fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {

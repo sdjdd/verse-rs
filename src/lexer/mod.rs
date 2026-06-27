@@ -127,6 +127,9 @@ pub enum Token {
     #[token("set")]
     Set,
 
+    #[token("var")]
+    Var,
+
     #[regex("[A-Za-z][A-Za-z0-9_]*")]
     #[regex("_[A-Za-z0-9_]+")]
     Id,
@@ -390,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = lex_ok("if then else set true false");
+        let tokens = lex_ok("if then else set var true false");
         assert_eq!(
             tokens,
             vec![
@@ -398,6 +401,7 @@ mod tests {
                 Token::Then,
                 Token::Else,
                 Token::Set,
+                Token::Var,
                 Token::True,
                 Token::False
             ]
@@ -411,6 +415,16 @@ mod tests {
         assert_eq!(
             tokens,
             vec![Token::Set, Token::Id, Token::Eq, Token::IntegerLiteral]
+        );
+    }
+
+    #[test]
+    fn test_var_declaration() {
+        let source = "var X: int = 5";
+        let tokens = lex_ok(source);
+        assert_eq!(
+            tokens,
+            vec![Token::Var, Token::Id, Token::Colon, Token::Id, Token::Eq, Token::IntegerLiteral]
         );
     }
 

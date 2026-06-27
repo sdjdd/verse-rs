@@ -45,7 +45,8 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
         ExprKind::Char32(value) => Ok(Ok(Value::Char32(*value))),
         ExprKind::String(value) => Ok(Ok(Value::String(value.clone()))),
         ExprKind::Logic(value) => Ok(Ok(Value::Logic(*value))),
-        ExprKind::Assign(expr) => eval_assignment(expr, ctx),
+        ExprKind::Decl(expr) => eval_assignment(expr, ctx),
+        ExprKind::VarDecl(expr) => eval_var_decl(expr, ctx),
         ExprKind::Set(expr) => eval_set(expr, ctx),
         ExprKind::Id(expr) => eval_identifier(expr, ctx),
         ExprKind::Binary(expr) => eval_binary(expr, ctx),
@@ -57,11 +58,8 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
     }
 }
 
-fn eval_assignment(expr: &AssignmentExpr, ctx: &mut EvalContext) -> EvalResult {
-    eval_set(
-        &SetExpr::new(expr.target.clone(), *expr.expr.clone()),
-        ctx,
-    )
+fn eval_assignment(expr: &DeclarationExpr, ctx: &mut EvalContext) -> EvalResult {
+    eval_set(&SetExpr::new(expr.target.clone(), *expr.value.clone()), ctx)
 }
 
 fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> EvalResult {
@@ -72,6 +70,14 @@ fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> EvalResult {
                 ctx.bindings.insert(id.symbol, value.clone());
             }
         }
+    }
+    Ok(value)
+}
+
+fn eval_var_decl(expr: &VarDeclExpr, ctx: &mut EvalContext) -> EvalResult {
+    let value = eval(&expr.expr, ctx)?;
+    if let Ok(value) = &value {
+        ctx.bindings.insert(expr.name.symbol, value.clone());
     }
     Ok(value)
 }
