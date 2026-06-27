@@ -28,6 +28,17 @@ pub enum ExprKind {
     Block(BlockExpr),
 }
 
+#[derive(Debug, Clone)]
+pub enum TypeExprKind {
+    Named(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeExpr {
+    pub kind: TypeExprKind,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, Constructor)]
 pub struct IdentifierExpr {
     pub name: String,
@@ -61,13 +72,15 @@ impl TryFrom<Expression> for LValue {
 #[derive(Debug, Clone)]
 pub struct AssignmentExpr {
     pub target: LValue,
+    pub typ: Option<TypeExpr>,
     pub expr: Box<Expression>,
 }
 
 impl AssignmentExpr {
-    pub fn new(target: LValue, expr: Expression) -> Self {
+    pub fn new(target: LValue, typ: Option<TypeExpr>, expr: Expression) -> Self {
         Self {
             target,
+            typ,
             expr: expr.into(),
         }
     }

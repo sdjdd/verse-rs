@@ -152,37 +152,64 @@ impl<'src> Parser<'src> {
         }
     }
 
+    fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
+        let start = self.current_token_span.clone();
+        self.expect(Token::Id)?;
+        Ok(TypeExpr {
+            kind: TypeExprKind::Named(self.slice().to_string()),
+            span: start.start..self.current_token_span.end,
+        })
+    }
+
     fn parse_assignment_expr(&mut self) -> ParseResult<Expression> {
         let start = self.current_token_span.clone();
         let mut lhs = self.parse_compare_chain_expr()?;
-        while self.consume_if(Token::ColonEq)? {
+
+        loop {
+            let typ = match self.peek()? {
+                Token::Colon => {
+                    self.next().unwrap();
+                    let typ = Some(self.parse_type_expr()?);
+                    self.expect(Token::Eq)?;
+                    typ
+                }
+                Token::ColonEq => {
+                    self.next().unwrap();
+                    None
+                }
+                _ => break,
+            };
+
             let target: LValue =
                 lhs.try_into()
                     .map_err(|e: Expression| ParseError::SyntaxError {
                         message: "Invalid assignment target".to_string(),
                         span: e.span,
                     })?;
+
             let rhs = self.parse_expression()?;
-            lhs = self.make_expr(start.clone(), AssignmentExpr::new(target, rhs));
+            lhs = self.make_expr(start.clone(), AssignmentExpr::new(target, typ, rhs));
         }
+
         Ok(lhs)
     }
 
     fn parse_set_expr(&mut self) -> ParseResult<Expression> {
         let start = self.current_token_span.clone();
         self.expect(Token::Set)?;
-        
+
         let target_expr = self.parse_primary_expr()?;
-        let target: LValue = target_expr.try_into().map_err(|e: Expression| {
-            ParseError::SyntaxError {
-                message: "Invalid set target".to_string(),
-                span: e.span,
-            }
-        })?;
-        
+        let target: LValue =
+            target_expr
+                .try_into()
+                .map_err(|e: Expression| ParseError::SyntaxError {
+                    message: "Invalid set target".to_string(),
+                    span: e.span,
+                })?;
+
         self.expect(Token::Eq)?;
         let expr = self.parse_expression()?;
-        
+
         Ok(self.make_expr(start, SetExpr::new(target, expr)))
     }
 
@@ -416,9 +443,7 @@ impl<'src> Parser<'src> {
     fn parse_char_literal(&mut self) -> ParseResult<ExprKind> {
         let mut src = self.slice();
         if src.starts_with("0o") {
-            return Ok(ExprKind::Char(
-                u8::from_str_radix(&src[2..], 16).unwrap(),
-            ));
+            return Ok(ExprKind::Char(u8::from_str_radix(&src[2..], 16).unwrap()));
         }
         src = &src[1..src.len() - 1];
         let ch = if src.starts_with('\\') {
