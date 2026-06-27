@@ -21,7 +21,6 @@ fn main() {
     //     println!("{:?}", token)
     // }
     let mut parser = Parser::new(&source, lexer);
-    let mut ctx = EvalContext::new();
     let program = parser
         .parse()
         .map_err(|err| {
@@ -41,6 +40,7 @@ fn main() {
             err
         })
         .unwrap();
+    let mut ctx = EvalContext::new(parser.get_symbol_table());
     let mut value = Ok(Value::Void);
     program.expressions.iter().for_each(|expr| {
         value = eval(expr, &mut ctx).unwrap();

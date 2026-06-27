@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use crate::{
     ast::*,
+    core::SymbolTable,
     lexer::{IndentAwareLexer, LexerError, Span, Token},
 };
 
@@ -34,6 +35,8 @@ pub struct Parser<'src> {
     next_token_span: Span,
     current_token: Option<Token>,
     current_token_span: Span,
+
+    symbol_table: SymbolTable,
 }
 
 impl<'src> Parser<'src> {
@@ -45,7 +48,12 @@ impl<'src> Parser<'src> {
             next_token_span: Default::default(),
             current_token: None,
             current_token_span: Default::default(),
+            symbol_table: SymbolTable::new(),
         }
+    }
+
+    pub fn get_symbol_table(&self) -> SymbolTable {
+        self.symbol_table.clone()
     }
 
     fn slice(&self) -> &'src str {
@@ -388,8 +396,8 @@ impl<'src> Parser<'src> {
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
         let start = self.current_token_span.clone();
         self.expect(Token::Id)?;
-        let name = self.slice().to_string();
-        Ok(self.make_expr(start, IdentifierExpr::new(name)))
+        let symbol = self.symbol_table.intern(self.slice());
+        Ok(self.make_expr(start, IdentifierExpr::new(symbol)))
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {

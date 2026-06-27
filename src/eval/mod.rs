@@ -2,7 +2,11 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::{ast::*, runtime::Value};
+use crate::{
+    ast::*,
+    core::{Symbol, SymbolTable},
+    runtime::Value,
+};
 
 #[derive(Debug)]
 pub struct Failure();
@@ -19,13 +23,15 @@ pub enum EvalError {
 pub type EvalResult<T = Value> = Result<Result<T, Failure>, EvalError>;
 
 pub struct EvalContext {
-    bindings: HashMap<String, Value>,
+    bindings: HashMap<Symbol, Value>,
+    symbol_table: SymbolTable,
 }
 
 impl EvalContext {
-    pub fn new() -> Self {
+    pub fn new(symbol_table: SymbolTable) -> Self {
         Self {
             bindings: HashMap::new(),
+            symbol_table,
         }
     }
 }
@@ -56,7 +62,7 @@ fn eval_assignment(expr: &AssignmentExpr, ctx: &mut EvalContext) -> EvalResult {
     if let Ok(value) = &value {
         match &expr.target.kind {
             LValueKind::Id(id) => {
-                ctx.bindings.insert(id.name.clone(), value.clone());
+                ctx.bindings.insert(id.symbol, value.clone());
             }
         }
     }
@@ -68,7 +74,7 @@ fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> EvalResult {
     if let Ok(value) = &value {
         match &expr.target.kind {
             LValueKind::Id(id) => {
-                ctx.bindings.insert(id.name.clone(), value.clone());
+                ctx.bindings.insert(id.symbol, value.clone());
             }
         }
     }
@@ -76,19 +82,19 @@ fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> EvalResult {
 }
 
 fn eval_identifier(expr: &IdentifierExpr, ctx: &mut EvalContext) -> EvalResult {
-    if let Some(value) = ctx.bindings.get(&expr.name) {
+    if let Some(value) = ctx.bindings.get(&expr.symbol) {
         Ok(Ok(value.clone()))
     } else {
         Err(EvalError::ReferenceError(format!(
             "{} is not defined",
-            expr.name
+            ctx.symbol_table.resolve(expr.symbol)
         )))
     }
 }
 
 fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
     match &expr.callee.kind {
-        ExprKind::Id(id) => match id.name.as_str() {
+        ExprKind::Id(id) => match ctx.symbol_table.resolve(id.symbol) {
             "Print" => {
                 if let Some(arg) = expr.args.first() {
                     if let Ok(value) = eval(arg, ctx)? {
@@ -98,7 +104,7 @@ fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
                 Ok(Ok(Value::Void))
             }
             name => {
-                if let Some(value) = ctx.bindings.get(name).cloned() {
+                if let Some(value) = ctx.bindings.get(&id.symbol).cloned() {
                     match value {
                         Value::Tuple(elements) => Ok(eval_call_tuple(&elements, &expr.args, ctx)?),
                         _ => unimplemented!(),

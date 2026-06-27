@@ -1,6 +1,6 @@
 use derive_more::{Constructor, From};
 
-use crate::lexer::Span;
+use crate::{core::Symbol, lexer::Span};
 
 #[derive(Debug, Clone)]
 pub struct Expression {
@@ -41,7 +41,7 @@ pub struct TypeExpr {
 
 #[derive(Debug, Clone, Constructor)]
 pub struct IdentifierExpr {
-    pub name: String,
+    pub symbol: Symbol,
 }
 
 #[derive(Debug, Clone)]
