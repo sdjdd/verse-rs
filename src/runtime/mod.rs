@@ -6,7 +6,7 @@ pub enum Value {
     Char(u8),
     Char32(char),
     String(String),
-    Bool(bool),
+    Logic(bool),
     Tuple(Vec<Value>),
 }
 
@@ -14,7 +14,7 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Void => Ok(()),
-            Value::Bool(value) => write!(f, "{}", value),
+            Value::Logic(value) => write!(f, "{}", value),
             Value::Integer(value) => write!(f, "{}", value),
             Value::Float(value) => write!(f, "{}", value),
             Value::Char(value) => write!(f, "{}", *value as char),

@@ -75,7 +75,7 @@ fn eval_literal(expr: &LiteralExpr, _ctx: &mut EvalContext) -> EvalResult {
         LiteralExpr::Char(value) => Value::Char(*value),
         LiteralExpr::Char32(value) => Value::Char32(*value),
         LiteralExpr::String(value) => Value::String(value.clone()),
-        LiteralExpr::Bool(value) => Value::Bool(*value),
+        LiteralExpr::Bool(value) => Value::Logic(*value),
     };
     Ok(Ok(value))
 }
@@ -169,7 +169,7 @@ fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
 
 fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
     if let Ok(test) = eval(&expr.test, ctx)? {
-        if !matches!(test, Value::Bool(false)) {
+        if !matches!(test, Value::Logic(false)) {
             eval(&expr.consequent, ctx)
         } else if let Some(alternate) = &expr.alternate {
             eval(alternate, ctx)
