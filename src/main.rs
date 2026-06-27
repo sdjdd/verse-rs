@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{self, Read};
 
 use verse::eval::{EvalContext, eval};
 use verse::lexer::IndentAwareLexer;
@@ -8,13 +9,13 @@ use verse::runtime::Value;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let filename = if args.len() > 1 {
-        &args[1]
+    let source = if args.len() > 1 && &args[1] != "-" {
+        fs::read_to_string(&args[1]).unwrap()
     } else {
-        "test.verse"
+        let mut buffer = String::new();
+        io::stdin().read_to_string(&mut buffer).unwrap();
+        buffer
     };
-
-    let source = fs::read_to_string(filename).unwrap();
     let lexer = IndentAwareLexer::new(&source);
     // for token in lexer.clone().into_iter() {
     //     println!("{:?}", token)

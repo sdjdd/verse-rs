@@ -146,24 +146,40 @@ fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
     match (left, right) {
         (Ok(left), Ok(right)) => {
             let value = match expr.op {
-                BinaryOperator::Plus => match (left, right) {
+                BinaryOperator::Plus => match (&left, &right) {
                     (Value::Integer(l), Value::Integer(r)) => Value::Integer(l + r),
                     (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
+                    _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
+                        Value::rational(a.0 * b.1 + b.0 * a.1, a.1 * b.1)
+                    }
                     _ => unimplemented!(),
                 },
-                BinaryOperator::Sub => match (left, right) {
+                BinaryOperator::Sub => match (&left, &right) {
                     (Value::Integer(l), Value::Integer(r)) => Value::Integer(l - r),
                     (Value::Float(l), Value::Float(r)) => Value::Float(l - r),
+                    _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
+                        Value::rational(a.0 * b.1 - b.0 * a.1, a.1 * b.1)
+                    }
                     _ => unimplemented!(),
                 },
-                BinaryOperator::Mul => match (left, right) {
+                BinaryOperator::Mul => match (&left, &right) {
                     (Value::Integer(l), Value::Integer(r)) => Value::Integer(l * r),
                     (Value::Float(l), Value::Float(r)) => Value::Float(l * r),
+                    _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
+                        Value::rational(a.0 * b.0, a.1 * b.1)
+                    }
                     _ => unimplemented!(),
                 },
-                BinaryOperator::Div => match (left, right) {
-                    (Value::Integer(l), Value::Integer(r)) => Value::Integer(l / r),
+                BinaryOperator::Div => match (&left, &right) {
+                    (Value::Integer(_), Value::Integer(0)) => return Ok(Err(Failure())),
+                    (Value::Integer(l), Value::Integer(r)) => Value::rational(*l, *r),
                     (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
+                    _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
+                        if b.0 == 0 {
+                            return Ok(Err(Failure()));
+                        }
+                        Value::rational(a.0 * b.1, a.1 * b.0)
+                    }
                     _ => unimplemented!(),
                 },
             };
