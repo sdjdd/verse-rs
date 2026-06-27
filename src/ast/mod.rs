@@ -30,7 +30,8 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone)]
 pub enum TypeExprKind {
-    Named(String),
+    Named(Symbol),
+    Generic { base: Symbol, args: Vec<TypeExpr> },
 }
 
 #[derive(Debug, Clone)]

@@ -163,10 +163,26 @@ impl<'src> Parser<'src> {
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
         let start = self.current_token_span.clone();
         self.expect(Token::Id)?;
-        Ok(TypeExpr {
-            kind: TypeExprKind::Named(self.slice().to_string()),
-            span: start.start..self.current_token_span.end,
-        })
+        let symbol = self.symbol_table.intern(self.slice());
+
+        match self.slice() {
+            "tuple" => {
+                self.expect(Token::LParen)?;
+                let mut args = vec![self.parse_type_expr()?];
+                while self.consume_if(Token::Comma)? {
+                    args.push(self.parse_type_expr()?);
+                }
+                self.expect(Token::RParen)?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Generic { base: symbol, args },
+                    span: start.start..self.current_token_span.end,
+                })
+            }
+            _ => Ok(TypeExpr {
+                kind: TypeExprKind::Named(symbol),
+                span: start.start..self.current_token_span.end,
+            }),
+        }
     }
 
     fn parse_assignment_expr(&mut self) -> ParseResult<Expression> {
