@@ -55,8 +55,12 @@ impl<'src> Parser<'src> {
         }
     }
 
-    pub fn get_symbol_table(&self) -> SymbolTable {
-        self.symbol_table.clone()
+    pub fn get_symbol_table(&self) -> &SymbolTable {
+        &self.symbol_table
+    }
+
+    pub fn get_symbol_table_mut(&mut self) -> &mut SymbolTable {
+        &mut self.symbol_table
     }
 
     fn slice(&self) -> &'src str {
@@ -172,9 +176,8 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
-        let start = self.current_token_span.clone();
         self.expect(Token::Id)?;
-        let symbol = self.symbol_table.intern(self.slice());
+        let start = self.current_token_span.clone();
 
         match self.slice() {
             "tuple" => {
@@ -185,20 +188,23 @@ impl<'src> Parser<'src> {
                 }
                 self.expect(Token::RParen)?;
                 Ok(TypeExpr {
-                    kind: TypeExprKind::Generic { base: symbol, args },
+                    kind: TypeExprKind::Tuple(args),
                     span: start.start..self.current_token_span.end,
                 })
             }
-            _ => Ok(TypeExpr {
-                kind: TypeExprKind::Named(symbol),
-                span: start.start..self.current_token_span.end,
-            }),
+            _ => {
+                let symbol = self.symbol_table.intern(self.slice());
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Named(symbol),
+                    span: start.start..self.current_token_span.end,
+                })
+            }
         }
     }
 
     fn parse_declaration_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
         let mut lhs = self.parse_compare_chain_expr()?;
+        let start = lhs.span.clone();
 
         loop {
             let typ = match self.peek()? {
@@ -230,8 +236,8 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_set_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
         self.expect(Token::Set)?;
+        let start = self.current_token_span.clone();
 
         let target_expr = self.parse_primary_expr()?;
         let target: LValue =
@@ -438,14 +444,13 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
         self.expect(Token::Id)?;
+        let start = self.current_token_span.clone();
         let symbol = self.symbol_table.intern(self.slice());
         Ok(self.make_expr(start, IdentifierExpr::new(symbol)))
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
         let expr = match self.next()? {
             Token::IntegerLiteral => self.parse_integer_literal()?,
             Token::FloatLiteral => self.parse_float_literal()?,
@@ -461,6 +466,7 @@ impl<'src> Parser<'src> {
                 return Err(self.unexpected_error());
             }
         };
+        let start = self.current_token_span.clone();
         Ok(self.make_expr(start, expr))
     }
 
@@ -564,8 +570,8 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_tuple_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
         self.expect(Token::LParen)?;
+        let start = self.current_token_span.clone();
         let expr = self.parse_expression()?;
         match self.next()? {
             Token::Comma => {

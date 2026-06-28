@@ -2,11 +2,12 @@ use std::env;
 use std::fs;
 use std::io::{self, Read};
 
+use verse::debug::{print_parser_error, print_semantic_error};
 use verse::eval::{EvalContext, eval};
 use verse::lexer::IndentAwareLexer;
-use verse::parser::{ParseError, Parser};
+use verse::parser::Parser;
 use verse::runtime::Value;
-use verse::semantic::{SemanticContext, check_expr, resolve_expr_type};
+use verse::semantic::{SemanticContext, resolve_expr_type};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -22,63 +23,26 @@ fn main() {
     //     println!("{:?}", token)
     // }
     let mut parser = Parser::new(&source, lexer);
+
     let program = parser
         .parse()
-        .map_err(|err| {
-            match &err {
-                ParseError::UnexpectedToken { span, .. } => {
-                    println!(
-                        "line,column 1 = {:?}",
-                        get_source_position(&source, span.start)
-                    );
-                    println!(
-                        "line,column 2 = {:?}",
-                        get_source_position(&source, span.end)
-                    );
-                }
-                _ => {}
-            };
-            err
-        })
+        .map_err(|err| print_parser_error(&err, &source))
         .unwrap();
 
-    let mut semantic_ctx = SemanticContext::new();
+    let mut semantic_ctx = SemanticContext::new(parser.get_symbol_table_mut());
+
     for expr in &program.expressions {
-        resolve_expr_type(expr, &mut semantic_ctx);
-    }
-    for expr in &program.expressions {
-        check_expr(expr, &mut semantic_ctx).unwrap();
+        resolve_expr_type(expr, &mut semantic_ctx)
+            .map_err(|e| {
+                print_semantic_error(&e, &source, parser.get_symbol_table().clone());
+            })
+            .unwrap();
     }
 
-    let mut ctx = EvalContext::new(parser.get_symbol_table());
+    let mut ctx = EvalContext::new(parser.get_symbol_table().clone());
     let mut value = Ok(Value::Void);
     program.expressions.iter().for_each(|expr| {
         value = eval(expr, &mut ctx).unwrap();
     });
     println!("{:?}", value);
-}
-
-fn get_source_position(src: &str, offset: usize) -> Option<(usize, usize)> {
-    let mut line: usize = 1;
-    let mut col: usize = 1;
-    let mut ofst: usize = 0;
-
-    if offset == ofst {
-        return Some((line, col));
-    }
-
-    for ch in src.chars() {
-        ofst += ch.len_utf8();
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-        if offset == ofst {
-            return Some((line, col));
-        }
-    }
-
-    None
 }
