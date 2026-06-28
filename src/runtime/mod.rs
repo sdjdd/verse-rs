@@ -1,3 +1,20 @@
+pub mod builtin_funcs;
+
+#[derive(Debug)]
+pub struct Failure();
+
+pub struct CallContext<'a> {
+    pub args: &'a [Value],
+    pub ret_val: Option<Result<Value, Failure>>,
+}
+
+pub type NativeFunction = fn(ctx: &mut CallContext);
+
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionKind {
+    Native(NativeFunction),
+}
+
 #[derive(Clone, Debug)]
 pub enum Value {
     Void,
@@ -9,6 +26,7 @@ pub enum Value {
     String(String),
     Logic(bool),
     Tuple(Vec<Value>),
+    Function { kind: FunctionKind },
 }
 
 impl Value {
@@ -66,6 +84,7 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, ")")
             }
+            _ => unimplemented!(),
         }
     }
 }
@@ -87,9 +106,7 @@ impl PartialOrd for Value {
         match (self, other) {
             (Value::Integer(a), Value::Integer(b)) => a.partial_cmp(b),
             (Value::Integer(n), Value::Rational(num, den))
-            | (Value::Rational(num, den), Value::Integer(n)) => {
-                (n * den).partial_cmp(num)
-            }
+            | (Value::Rational(num, den), Value::Integer(n)) => (n * den).partial_cmp(num),
             (Value::Rational(a_n, a_d), Value::Rational(b_n, b_d)) => {
                 (a_n * b_d).partial_cmp(&(b_n * a_d))
             }

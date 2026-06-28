@@ -5,11 +5,8 @@ use thiserror::Error;
 use crate::{
     ast::*,
     core::{Symbol, SymbolTable},
-    runtime::Value,
+    runtime::{CallContext, Failure, FunctionKind, Value, builtin_funcs},
 };
-
-#[derive(Debug)]
-pub struct Failure();
 
 #[derive(Error, Debug)]
 pub enum EvalError {
@@ -28,9 +25,18 @@ pub struct EvalContext {
 }
 
 impl EvalContext {
-    pub fn new(symbol_table: SymbolTable) -> Self {
+    pub fn new(mut symbol_table: SymbolTable) -> Self {
+        let mut bindings = HashMap::new();
+
+        bindings.insert(
+            symbol_table.intern("Print"),
+            Value::Function {
+                kind: FunctionKind::Native(builtin_funcs::print),
+            },
+        );
+
         Self {
-            bindings: HashMap::new(),
+            bindings,
             symbol_table,
         }
     }
@@ -95,26 +101,31 @@ fn eval_identifier(expr: &IdentifierExpr, ctx: &mut EvalContext) -> EvalResult {
 
 fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
     match &expr.callee.kind {
-        ExprKind::Id(id) => match ctx.symbol_table.resolve(id.symbol) {
-            "Print" => {
-                if let Some(arg) = expr.args.first() {
-                    if let Ok(value) = eval(arg, ctx)? {
-                        println!("{}", value);
+        ExprKind::Id(id) => {
+            let value = ctx.bindings.get(&id.symbol).cloned().unwrap();
+            match value {
+                Value::Tuple(elements) => Ok(eval_call_tuple(&elements, &expr.args, ctx)?),
+                Value::Function { kind } => match kind {
+                    FunctionKind::Native(func) => {
+                        let args: Result<Result<Vec<_>, _>, _> =
+                            expr.args.iter().map(|arg| eval(arg, ctx)).collect();
+                        args.and_then(|args| {
+                            Ok(args.and_then(|args| {
+                                let mut ctx = CallContext {
+                                    args: &args,
+                                    ret_val: None,
+                                };
+                                func(&mut ctx);
+                                ctx.ret_val
+                                    .unwrap_or(Ok(Value::Void))
+                                    .map_err(|_| Failure())
+                            }))
+                        })
                     }
-                }
-                Ok(Ok(Value::Void))
+                },
+                _ => unimplemented!(),
             }
-            name => {
-                if let Some(value) = ctx.bindings.get(&id.symbol).cloned() {
-                    match value {
-                        Value::Tuple(elements) => Ok(eval_call_tuple(&elements, &expr.args, ctx)?),
-                        _ => unimplemented!(),
-                    }
-                } else {
-                    return Err(EvalError::ReferenceError(format!("{} not found", name)));
-                }
-            }
-        },
+        }
         _ => unimplemented!(),
     }
 }
