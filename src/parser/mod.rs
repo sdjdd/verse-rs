@@ -109,10 +109,18 @@ impl<'src> Parser<'src> {
         ExprId(id)
     }
 
-    fn make_expr(&mut self, start: Span, kind: impl Into<ExprKind>) -> Expression {
+    fn make_expr(&mut self, start: usize, kind: impl Into<ExprKind>) -> Expression {
         Expression {
             id: self.generate_expr_id(),
-            span: start.start..self.current_token_span.end,
+            span: start..self.current_token_span.end,
+            kind: kind.into(),
+        }
+    }
+
+    fn make_expr2(&mut self, span: Span, kind: impl Into<ExprKind>) -> Expression {
+        Expression {
+            id: self.generate_expr_id(),
+            span,
             kind: kind.into(),
         }
     }
@@ -204,26 +212,21 @@ impl<'src> Parser<'src> {
 
     fn parse_declaration_expr(&mut self) -> ParseResult<Expression> {
         let mut lhs = self.parse_compare_chain_expr()?;
-        let start = lhs.span.clone();
+        let start = lhs.span.start;
 
-        if self.consume_if(Token::Colon)? {
-            let typ = if self.consume_if(Token::Eq)? {
-                None
-            } else {
-                let typ = self.parse_type_expr()?;
-                self.expect(Token::Eq)?;
-                Some(typ)
-            };
+        if let ExprKind::Id(id_expr) = &lhs.kind {
+            if self.consume_if(Token::Colon)? {
+                let typ = if self.consume_if(Token::Eq)? {
+                    None
+                } else {
+                    let typ = self.parse_type_expr()?;
+                    self.expect(Token::Eq)?;
+                    Some(typ)
+                };
 
-            let target: LValue =
-                lhs.try_into()
-                    .map_err(|e: Expression| ParseError::SyntaxError {
-                        message: "Invalid assignment target".to_string(),
-                        span: e.span,
-                    })?;
-
-            let rhs = self.parse_expression()?;
-            lhs = self.make_expr(start.clone(), DeclarationExpr::new(target, typ, rhs));
+                let rhs = self.parse_expression()?;
+                lhs = self.make_expr(start, DeclarationExpr::new(id_expr.symbol, typ, rhs));
+            }
         }
 
         Ok(lhs)
@@ -231,7 +234,7 @@ impl<'src> Parser<'src> {
 
     fn parse_set_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::Set)?;
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
 
         let target_expr = self.parse_expression()?;
         let target: LValue =
@@ -249,7 +252,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_var_decl(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         self.expect(Token::Var)?;
 
         self.expect(Token::Id)?;
@@ -266,7 +269,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         let head = self.parse_additive_expr()?;
         let mut rest = Vec::new();
         loop {
@@ -291,7 +294,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_additive_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         let mut lhs = self.parse_multiplicative_expr()?;
         loop {
             let op = match self.peek()? {
@@ -301,13 +304,13 @@ impl<'src> Parser<'src> {
             };
             self.next().unwrap();
             let rhs = self.parse_multiplicative_expr()?;
-            lhs = self.make_expr(start.clone(), BinaryExpr::new(lhs, op, rhs));
+            lhs = self.make_expr(start, BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
     }
 
     fn parse_multiplicative_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         let mut lhs = self.parse_primary_expr()?;
         loop {
             let op = match self.peek()? {
@@ -317,13 +320,13 @@ impl<'src> Parser<'src> {
             };
             self.next().unwrap();
             let rhs = self.parse_primary_expr()?;
-            lhs = self.make_expr(start.clone(), BinaryExpr::new(lhs, op, rhs));
+            lhs = self.make_expr(start, BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
     }
 
     fn parse_if_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         self.expect(Token::If)?;
 
         let (test, consequent, alternate) = match self.next()? {
@@ -397,8 +400,9 @@ impl<'src> Parser<'src> {
 
     fn parse_block(&mut self) -> ParseResult<Expression> {
         self.skip_newlines()?;
-        let start = self.current_token_span.clone();
         self.expect(Token::Indent)?;
+        let start = self.current_token_span.end;
+        let mut end = 0;
         let mut body = Vec::new();
         loop {
             if matches!(self.peek()?, Token::Dedent | Token::EOF) {
@@ -406,9 +410,10 @@ impl<'src> Parser<'src> {
                 break;
             }
             body.push(self.parse_expression()?);
+            end = self.current_token_span.end;
             self.skip_newlines()?;
         }
-        Ok(self.make_expr(start, BlockExpr::new(body)))
+        Ok(self.make_expr2(start..end, BlockExpr::new(body)))
     }
 
     fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
@@ -422,7 +427,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_function_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         let id = self.parse_identifier_expr()?;
 
         if self.consume_if(Token::LParen)? {
@@ -438,7 +443,7 @@ impl<'src> Parser<'src> {
 
                 let param_name = self.slice();
                 let symbol = self.symbol_table.intern(param_name);
-                args.push(self.make_expr(start.clone(), IdentifierExpr::new(symbol)));
+                args.push(self.make_expr(start, IdentifierExpr::new(symbol)));
 
                 if !self.consume_if(Token::Colon)? {
                     is_func_expr = false;
@@ -472,7 +477,7 @@ impl<'src> Parser<'src> {
                     self.parse_expression()?
                 };
                 return Ok(self.make_expr(
-                    start.clone(),
+                    start,
                     FunctionExpr::new(id.symbol, params, return_type, body),
                 ));
             }
@@ -484,11 +489,11 @@ impl<'src> Parser<'src> {
                 }
             }
             self.expect(Token::RParen)?;
-            let callee = self.make_expr(start.clone(), id);
-            return Ok(self.make_expr(start.clone(), CallExpr::new(callee, args)));
+            let callee = self.make_expr(start, id);
+            return Ok(self.make_expr(start, CallExpr::new(callee, args)));
         }
 
-        Ok(self.make_expr(start.clone(), id))
+        Ok(self.make_expr(start, id))
     }
 
     fn parse_identifier_expr(&mut self) -> ParseResult<IdentifierExpr> {
@@ -513,7 +518,7 @@ impl<'src> Parser<'src> {
                 return Err(self.unexpected_error());
             }
         };
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         Ok(self.make_expr(start, expr))
     }
 
@@ -571,7 +576,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_template_expression(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         self.expect(Token::TemplateHead)?;
         let mut elements = Vec::new();
         let src = self.slice();
@@ -618,7 +623,7 @@ impl<'src> Parser<'src> {
 
     fn parse_tuple_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::LParen)?;
-        let start = self.current_token_span.clone();
+        let start = self.current_token_span.start;
         let expr = self.parse_expression()?;
         match self.next()? {
             Token::Comma => {

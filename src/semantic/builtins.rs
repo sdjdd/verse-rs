@@ -1,4 +1,7 @@
-use crate::core::{Symbol, SymbolTable};
+use crate::{
+    core::{Symbol, SymbolTable},
+    semantic::type_check::{TypeId, TypeInfo, TypeRegistry},
+};
 
 pub struct BuiltinSymbols {
     // types
@@ -34,6 +37,41 @@ impl BuiltinSymbols {
             s_string,
             s_void,
             s_print,
+        }
+    }
+}
+
+pub struct BuiltinTypes {
+    pub(crate) t_int: TypeId,
+    pub(crate) t_float: TypeId,
+    pub(crate) t_logic: TypeId,
+    pub(crate) t_char: TypeId,
+    pub(crate) t_char32: TypeId,
+    pub(crate) t_string: TypeId,
+    pub(crate) t_any: TypeId,
+    pub(crate) t_void: TypeId,
+}
+
+impl BuiltinTypes {
+    pub fn install(type_reg: &mut TypeRegistry) -> Self {
+        let t_int = type_reg.intern(TypeInfo::Int);
+        let t_float = type_reg.intern(TypeInfo::Float);
+        let t_logic = type_reg.intern(TypeInfo::Logic);
+        let t_char = type_reg.intern(TypeInfo::Char);
+        let t_char32 = type_reg.intern(TypeInfo::Char32);
+        let t_string = type_reg.intern(TypeInfo::String);
+        let t_any = type_reg.intern(TypeInfo::Any);
+        let t_void = type_reg.intern(TypeInfo::Void);
+
+        Self {
+            t_int,
+            t_float,
+            t_logic,
+            t_char,
+            t_char32,
+            t_string,
+            t_any,
+            t_void,
         }
     }
 }

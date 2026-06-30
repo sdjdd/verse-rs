@@ -1,23 +1,10 @@
-use std::collections::HashMap;
-
-use thiserror::Error;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::*,
     core::{Symbol, SymbolTable},
     runtime::{CallContext, Failure, FunctionId, FunctionKind, Value, builtin_funcs},
 };
-
-#[derive(Error, Debug)]
-pub enum EvalError {
-    #[error("ReferenceError: {0}")]
-    ReferenceError(String),
-
-    #[error("SyntaxError: {0}")]
-    SyntaxError(String),
-}
-
-pub type EvalResult<T = Value> = Result<Result<T, Failure>, EvalError>;
 
 #[derive(Default)]
 struct EvalScope {
@@ -28,10 +15,11 @@ pub struct EvalContext {
     symbol_table: SymbolTable,
     scopes: Vec<EvalScope>,
     functions: HashMap<FunctionId, FunctionExpr>,
+    void_funcs: HashSet<FunctionId>,
 }
 
 impl EvalContext {
-    pub fn new(mut symbol_table: SymbolTable) -> Self {
+    pub fn new(mut symbol_table: SymbolTable, void_funcs: &[FunctionId]) -> Self {
         let mut bindings = HashMap::new();
 
         bindings.insert(
@@ -50,6 +38,7 @@ impl EvalContext {
             scopes: vec![root_scope],
             symbol_table,
             functions: HashMap::new(),
+            void_funcs: void_funcs.iter().cloned().collect(),
         }
     }
 
@@ -87,15 +76,15 @@ impl EvalContext {
     }
 }
 
-pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
+pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> Result<Value, Failure> {
     match &expr.kind {
         ExprKind::Call(expr) => eval_call(expr, ctx),
-        ExprKind::Integer(value) => Ok(Ok(Value::Integer(*value))),
-        ExprKind::Float(value) => Ok(Ok(Value::Float(*value))),
-        ExprKind::Char(value) => Ok(Ok(Value::Char(*value))),
-        ExprKind::Char32(value) => Ok(Ok(Value::Char32(*value))),
-        ExprKind::String(value) => Ok(Ok(Value::String(value.clone()))),
-        ExprKind::Logic(value) => Ok(Ok(Value::Logic(*value))),
+        ExprKind::Integer(value) => Ok(Value::Integer(*value)),
+        ExprKind::Float(value) => Ok(Value::Float(*value)),
+        ExprKind::Char(value) => Ok(Value::Char(*value)),
+        ExprKind::Char32(value) => Ok(Value::Char32(*value)),
+        ExprKind::String(value) => Ok(Value::String(value.clone())),
+        ExprKind::Logic(value) => Ok(Value::Logic(*value)),
         ExprKind::Decl(expr) => eval_declaration(expr, ctx),
         ExprKind::VarDecl(expr) => eval_var_decl(expr, ctx),
         ExprKind::Set(expr) => eval_set(expr, ctx),
@@ -110,42 +99,37 @@ pub fn eval(expr: &Expression, ctx: &mut EvalContext) -> EvalResult {
     }
 }
 
-fn eval_declaration(expr: &DeclarationExpr, ctx: &mut EvalContext) -> EvalResult {
-    eval_set(&SetExpr::new(expr.target.clone(), *expr.value.clone()), ctx)
+fn eval_declaration(expr: &DeclarationExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
+    let value = eval(&expr.value, ctx)?;
+    ctx.declare(expr.target, value.clone());
+    Ok(value)
 }
 
-fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> EvalResult {
+fn eval_set(expr: &SetExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
     let value = eval(&expr.expr, ctx)?;
-    if let Ok(value) = &value {
-        match &expr.target.kind {
-            LValueKind::Id(id) => {
-                ctx.declare(id.symbol, value.clone());
-            }
+    match &expr.target.kind {
+        LValueKind::Id(id) => {
+            ctx.declare(id.symbol, value.clone());
         }
     }
     Ok(value)
 }
 
-fn eval_var_decl(expr: &VarDeclExpr, ctx: &mut EvalContext) -> EvalResult {
+fn eval_var_decl(expr: &VarDeclExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
     let value = eval(&expr.expr, ctx)?;
-    if let Ok(value) = &value {
-        ctx.declare(expr.name.symbol, value.clone());
-    }
+    ctx.declare(expr.name.symbol, value.clone());
     Ok(value)
 }
 
-fn eval_identifier(expr: &IdentifierExpr, ctx: &mut EvalContext) -> EvalResult {
+fn eval_identifier(expr: &IdentifierExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
     if let Some(value) = ctx.resolve_symbol(expr.symbol) {
-        Ok(Ok(value.clone()))
+        Ok(value.clone())
     } else {
-        Err(EvalError::ReferenceError(format!(
-            "{} is not defined",
-            ctx.symbol_table.resolve(expr.symbol)
-        )))
+        panic!("{} is not defined", ctx.symbol_table.resolve(expr.symbol))
     }
 }
 
-fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
+fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
     match &expr.callee.kind {
         ExprKind::Id(id) => {
             let value = ctx.resolve_symbol(id.symbol).unwrap();
@@ -153,19 +137,17 @@ fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
                 Value::Tuple(elements) => Ok(eval_call_tuple(&elements, &expr.args, ctx)?),
                 Value::Function { kind } => match kind {
                     FunctionKind::Native(func) => {
-                        let args: Result<Result<Vec<_>, _>, _> =
+                        let args: Result<Vec<_>, _> =
                             expr.args.iter().map(|arg| eval(arg, ctx)).collect();
                         args.and_then(|args| {
-                            Ok(args.and_then(|args| {
-                                let mut ctx = CallContext {
-                                    args: &args,
-                                    ret_val: None,
-                                };
-                                func(&mut ctx);
-                                ctx.ret_val
-                                    .unwrap_or(Ok(Value::Void))
-                                    .map_err(|_| Failure())
-                            }))
+                            let mut ctx = CallContext {
+                                args: &args,
+                                ret_val: None,
+                            };
+                            func(&mut ctx);
+                            ctx.ret_val
+                                .unwrap_or(Ok(Value::Void))
+                                .map_err(|_| Failure())
                         })
                     }
                     FunctionKind::Verse(func_id) => {
@@ -173,19 +155,22 @@ fn eval_call(expr: &CallExpr, ctx: &mut EvalContext) -> EvalResult {
 
                         let val = {
                             let func_expr = ctx.lookup_function(func_id).unwrap().clone();
-                            let args: Result<Result<Vec<_>, _>, _> =
+                            let args: Result<Vec<_>, _> =
                                 expr.args.iter().map(|arg| eval(arg, ctx)).collect();
 
                             args.map(|args| {
-                                args.map(|args| {
-                                    for (i, param) in func_expr.params.iter().enumerate() {
-                                        ctx.declare(param.name, args[i].clone());
-                                    }
-                                })
+                                for (i, param) in func_expr.params.iter().enumerate() {
+                                    ctx.declare(param.name, args[i].clone());
+                                }
                             })
                             .and_then(|_| {
-                                //
-                                eval(&func_expr.body, ctx)
+                                eval(&func_expr.body, ctx).map(|ret_val| {
+                                    if ctx.void_funcs.contains(&func_id) {
+                                        Value::Void
+                                    } else {
+                                        ret_val
+                                    }
+                                })
                             })
                         };
 
@@ -205,35 +190,34 @@ fn eval_call_tuple(
     elements: &[Value],
     arguments: &[Expression],
     ctx: &mut EvalContext,
-) -> EvalResult {
+) -> Result<Value, Failure> {
     if arguments.len() != 1 {
-        return Err(EvalError::SyntaxError(format!(
-            "expected 1 arguments, found {}",
-            arguments.len()
-        )));
+        panic!("expected 1 arguments, found {}", arguments.len())
     }
 
-    map_eval(ctx, &arguments[0], |arg| match arg {
+    let arg = eval(&arguments[0], ctx)?;
+
+    match arg {
         Value::Integer(idx) => {
             if idx >= 0 && idx < elements.len() as i64 {
                 Ok(elements[idx as usize].clone())
             } else {
-                Err(EvalError::SyntaxError(format!(
+                panic!(
                     "index out of bounds: the length is {} but the index is {}",
                     elements.len(),
                     idx
-                )))
+                )
             }
         }
         _ => unimplemented!(),
-    })
+    }
 }
 
-fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
+fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
     let left = eval(&expr.lhs, ctx)?;
     let right = eval(&expr.rhs, ctx)?;
     match (left, right) {
-        (Ok(left), Ok(right)) => {
+        (left, right) => {
             let value = match expr.op {
                 BinaryOperator::Plus => match (&left, &right) {
                     (Value::Integer(l), Value::Integer(r)) => Value::Integer(l + r),
@@ -260,105 +244,104 @@ fn eval_binary(expr: &BinaryExpr, ctx: &mut EvalContext) -> EvalResult {
                     _ => unimplemented!(),
                 },
                 BinaryOperator::Div => match (&left, &right) {
-                    (Value::Integer(_), Value::Integer(0)) => return Ok(Err(Failure())),
+                    (Value::Integer(_), Value::Integer(0)) => return Err(Failure()),
                     (Value::Integer(l), Value::Integer(r)) => Value::rational(*l, *r),
                     (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
                     _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
                         if b.0 == 0 {
-                            return Ok(Err(Failure()));
+                            return Err(Failure());
                         }
                         Value::rational(a.0 * b.1, a.1 * b.0)
                     }
                     _ => unimplemented!(),
                 },
             };
-            Ok(Ok(value))
+            Ok(value)
         }
-        _ => Ok(Err(Failure())),
     }
 }
 
-fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> EvalResult {
-    if let Ok(test) = eval(&expr.test, ctx)? {
+fn eval_if(expr: &IfExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
+    if let Ok(test) = eval(&expr.test, ctx) {
         if !matches!(test, Value::Logic(false)) {
             eval(&expr.consequent, ctx)
         } else if let Some(alternate) = &expr.alternate {
             eval(alternate, ctx)
         } else {
-            Ok(Ok(Value::Void))
+            Ok(Value::Void)
         }
     } else {
         if let Some(alternate) = &expr.alternate {
             eval(alternate, ctx)
         } else {
-            Ok(Err(Failure()))
+            Err(Failure())
         }
     }
 }
 
-fn eval_template(expr: &TemplateExpression, ctx: &mut EvalContext) -> EvalResult {
+fn eval_template(expr: &TemplateExpression, ctx: &mut EvalContext) -> Result<Value, Failure> {
     let mut strings = Vec::new();
     strings.reserve(expr.elements.len());
     for elem in expr.elements.iter() {
         match elem {
             TemplateElement::Raw(str) => strings.push(str.clone()),
             TemplateElement::Expr(expr) => {
-                if let Ok(value) = eval(expr, ctx)? {
+                if let Ok(value) = eval(expr, ctx) {
                     strings.push(value.to_string());
                 } else {
-                    return Ok(Err(Failure()));
+                    return Err(Failure());
                 }
             }
         }
     }
-    Ok(Ok(Value::String(strings.concat())))
+    Ok(Value::String(strings.concat()))
 }
 
-fn eval_compare_chain(expr: &CompareChainExpr, ctx: &mut EvalContext) -> EvalResult {
-    let leftmost = if let Ok(value) = eval(&expr.head, ctx)? {
+fn eval_compare_chain(expr: &CompareChainExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
+    let leftmost = if let Ok(value) = eval(&expr.head, ctx) {
         value
     } else {
-        return Ok(Err(Failure()));
+        return Err(Failure());
     };
 
     let mut prev = leftmost.clone();
 
     for (op, expr) in &expr.rest {
-        let current = if let Ok(value) = eval(expr, ctx)? {
+        let current = if let Ok(value) = eval(expr, ctx) {
             value
         } else {
-            return Ok(Err(Failure()));
+            return Err(Failure());
         };
 
         match op {
             CompareOp::Eq => {
                 if !(prev == current) {
-                    return Ok(Err(Failure()));
+                    return Err(Failure());
                 }
             }
             CompareOp::Ne => {
                 if !(prev != current) {
-                    return Ok(Err(Failure()));
+                    return Err(Failure());
                 }
             }
             CompareOp::Gt => {
                 if !(prev > current) {
-                    return Ok(Err(Failure()));
+                    return Err(Failure());
                 }
             }
             CompareOp::Ge => {
                 if !(prev >= current) {
-                    return Ok(Err(Failure()));
+                    return Err(Failure());
                 }
             }
             CompareOp::Lt => {
                 if !(prev < current) {
-                    return Ok(Err(Failure()));
+                    return Err(Failure());
                 }
             }
             CompareOp::Le => {
                 if !(prev <= current) {
-                    return Ok(Err(Failure()));
+                    return Err(Failure());
                 }
             }
         }
@@ -366,34 +349,38 @@ fn eval_compare_chain(expr: &CompareChainExpr, ctx: &mut EvalContext) -> EvalRes
         prev = current;
     }
 
-    Ok(Ok(leftmost))
+    Ok(leftmost)
 }
 
-fn eval_tuple(expr: &TupleExpr, ctx: &mut EvalContext) -> EvalResult {
+fn eval_tuple(expr: &TupleExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
     let mut values = Vec::new();
     values.reserve(expr.elements.len());
     for expr in &expr.elements {
-        if let Ok(value) = eval(expr, ctx)? {
+        if let Ok(value) = eval(expr, ctx) {
             values.push(value);
         } else {
-            return Ok(Err(Failure()));
+            return Err(Failure());
         }
     }
-    Ok(Ok(Value::Tuple(values)))
+    Ok(Value::Tuple(values))
 }
 
-fn eval_block(expr: &BlockExpr, ctx: &mut EvalContext) -> EvalResult {
+fn eval_block(expr: &BlockExpr, ctx: &mut EvalContext) -> Result<Value, Failure> {
     let mut result = Ok(Value::Void);
     for expr in &expr.body {
-        result = eval(expr, ctx)?;
+        result = eval(expr, ctx);
         if result.is_err() {
             break;
         }
     }
-    Ok(result)
+    result
 }
 
-fn eval_func_expr(expr: &FunctionExpr, ctx: &mut EvalContext, expr_id: ExprId) -> EvalResult {
+fn eval_func_expr(
+    expr: &FunctionExpr,
+    ctx: &mut EvalContext,
+    expr_id: ExprId,
+) -> Result<Value, Failure> {
     ctx.declare(
         expr.name,
         Value::Function {
@@ -401,17 +388,7 @@ fn eval_func_expr(expr: &FunctionExpr, ctx: &mut EvalContext, expr_id: ExprId) -
         },
     );
     ctx.declare_function(FunctionId(expr_id.0), expr.clone());
-    Ok(Ok(Value::Function {
+    Ok(Value::Function {
         kind: FunctionKind::Verse(FunctionId(expr_id.0)),
-    }))
-}
-
-fn map_eval<F>(ctx: &mut EvalContext, expr: &Expression, op: F) -> EvalResult
-where
-    F: Fn(Value) -> Result<Value, EvalError>,
-{
-    match eval(expr, ctx) {
-        Ok(Ok(v)) => op(v).map(|v| Ok(v)),
-        t => t,
-    }
+    })
 }

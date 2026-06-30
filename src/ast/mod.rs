@@ -82,13 +82,13 @@ impl TryFrom<Expression> for LValue {
 
 #[derive(Debug, Clone)]
 pub struct DeclarationExpr {
-    pub target: LValue,
+    pub target: Symbol,
     pub typ: Option<TypeExpr>,
     pub value: Box<Expression>,
 }
 
 impl DeclarationExpr {
-    pub fn new(target: LValue, typ: Option<TypeExpr>, value: Expression) -> Self {
+    pub fn new(target: Symbol, typ: Option<TypeExpr>, value: Expression) -> Self {
         Self {
             target,
             typ,

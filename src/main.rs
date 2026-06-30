@@ -7,7 +7,7 @@ use verse::eval::{EvalContext, eval};
 use verse::lexer::IndentAwareLexer;
 use verse::parser::Parser;
 use verse::runtime::Value;
-use verse::semantic::{SemanticContext, resolve_expr_type};
+use verse::semantic::SemanticContext;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -34,17 +34,20 @@ fn main() {
     let mut semantic_ctx = SemanticContext::new(parser.get_symbol_table_mut());
 
     for expr in &program.expressions {
-        resolve_expr_type(expr, &mut semantic_ctx)
-            .map_err(|e| {
-                print_semantic_error(&e, &source, parser.get_symbol_table().clone());
-            })
-            .unwrap();
+        semantic_ctx.handle_expr(expr)
     }
-
-    let mut ctx = EvalContext::new(parser.get_symbol_table().clone());
-    let mut value = Ok(Value::Void);
-    program.expressions.iter().for_each(|expr| {
-        value = eval(expr, &mut ctx).unwrap();
-    });
-    println!("{:?}", value);
+    for err in &semantic_ctx.errors {
+        print_semantic_error(&err, &source, parser.get_symbol_table().clone());
+    }
+    if semantic_ctx.errors.is_empty() {
+        let mut ctx = EvalContext::new(
+            parser.get_symbol_table().clone(),
+            semantic_ctx.get_void_functions(),
+        );
+        let mut value = Ok(Value::Void);
+        program
+            .expressions
+            .iter()
+            .for_each(|expr| value = eval(expr, &mut ctx));
+    }
 }
