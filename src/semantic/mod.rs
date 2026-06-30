@@ -47,6 +47,7 @@ impl SemanticContext {
             (bs.s_char32, TypeInfo::Char32),
             (bs.s_logic, TypeInfo::Logic),
             (bs.s_string, TypeInfo::String),
+            (bs.s_void, TypeInfo::Void),
         ];
 
         for (symbol, type_info) in primitive_type_map {
@@ -125,6 +126,18 @@ impl SemanticContext {
                 let type_id = scope.types.intern(TypeInfo::Tuple(arg_ids));
                 Ok(type_id)
             }
+            TypeExprKind::Function { params, ret } => {
+                let param_types: Result<Vec<_>, _> =
+                    params.iter().map(|p| self.resolve_type_expr(p)).collect();
+                let param_types = param_types?;
+                let return_type = self.resolve_type_expr(ret)?;
+                let scope = self.scopes.last_mut().unwrap();
+                let type_id = scope.types.intern(TypeInfo::Function {
+                    params: param_types,
+                    ret: return_type,
+                });
+                Ok(type_id)
+            }
         }
     }
 }
@@ -142,4 +155,7 @@ pub enum SemanticError {
 
     #[error("{span:?} cannot resolve type {symbol:?}")]
     TypeNotFound { span: Span, symbol: Symbol },
+
+    #[error("{span:?} arguments count mismatch")]
+    ArgsCountMismatch { span: Span },
 }

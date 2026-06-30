@@ -29,6 +29,8 @@ fn main() {
         .map_err(|err| print_parser_error(&err, &source))
         .unwrap();
 
+    // println!("{:#?}", program.expressions);
+
     let mut semantic_ctx = SemanticContext::new(parser.get_symbol_table_mut());
 
     for expr in &program.expressions {

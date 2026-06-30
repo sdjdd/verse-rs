@@ -31,12 +31,17 @@ pub enum ExprKind {
     CompareChain(CompareChainExpr),
     Tuple(TupleExpr),
     Block(BlockExpr),
+    Func(FunctionExpr),
 }
 
 #[derive(Debug, Clone)]
 pub enum TypeExprKind {
     Named(Symbol),
     Tuple(Vec<TypeExpr>),
+    Function {
+        params: Vec<TypeExpr>,
+        ret: Box<TypeExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -225,4 +230,35 @@ pub struct TupleExpr {
 #[derive(Debug, Clone, Constructor)]
 pub struct BlockExpr {
     pub body: Vec<Expression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionParam {
+    pub name: Symbol,
+    pub name_span: Span,
+    pub typ: TypeExpr,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionExpr {
+    pub name: Symbol,
+    pub params: Vec<FunctionParam>,
+    pub return_type: TypeExpr,
+    pub body: Box<Expression>,
+}
+
+impl FunctionExpr {
+    pub fn new(
+        name: Symbol,
+        params: Vec<FunctionParam>,
+        return_type: TypeExpr,
+        body: Expression,
+    ) -> Self {
+        Self {
+            name,
+            params,
+            return_type,
+            body: body.into(),
+        }
+    }
 }

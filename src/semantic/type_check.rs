@@ -10,7 +10,7 @@ use crate::{
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct TypeId(usize);
 
-#[derive(Hash, PartialEq, Eq, Clone)]
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum TypeInfo {
     Void,
     Any,
@@ -21,11 +21,12 @@ pub enum TypeInfo {
     Char32,
     String,
     Tuple(Vec<TypeId>),
+    Function { params: Vec<TypeId>, ret: TypeId },
     Option(TypeId),
     Named(Symbol),
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct TypeRegistry {
     map: HashMap<TypeInfo, TypeId>,
     vec: Vec<TypeInfo>,
@@ -72,6 +73,10 @@ impl TypeRegistry {
             None
         }
     }
+
+    pub fn lookup(&self, type_id: TypeId) -> Option<&TypeInfo> {
+        self.vec.get(type_id.0)
+    }
 }
 
 pub fn resolve_expr_type(
@@ -87,7 +92,7 @@ pub fn resolve_expr_type(
         ExprKind::String(_) => ctx.type_registry_mut().intern(TypeInfo::String),
         ExprKind::Template(expr) => handle_template_expr(expr, ctx)?,
         ExprKind::Tuple(expr) => handle_tuple_expr(expr, ctx)?,
-        ExprKind::Call(expr) => handle_call_expr(expr, ctx)?,
+        ExprKind::Call(call_expr) => handle_call_expr(expr, call_expr, ctx)?,
         ExprKind::Block(expr) => handle_block_expr(expr, ctx)?,
         ExprKind::If(expr) => handle_if_expr(expr, ctx)?,
         ExprKind::CompareChain(expr) => resolve_expr_type(&expr.head, ctx)?,
@@ -95,6 +100,7 @@ pub fn resolve_expr_type(
         ExprKind::VarDecl(expr) => handle_var_decl_expr(expr, ctx)?,
         ExprKind::Id(e) => handle_id_expr(e, ctx, &expr.span)?,
         ExprKind::Set(e) => handle_set_expr(e, ctx, &expr.span)?,
+        ExprKind::Func(expr) => handle_func_expr(expr, ctx)?,
         _ => unimplemented!("{:?}", expr.kind),
     };
     ctx.expr_type.insert(expr.id, type_id);
@@ -126,12 +132,73 @@ fn handle_tuple_expr(expr: &TupleExpr, ctx: &mut SemanticContext) -> Result<Type
     Ok(ctx.type_registry_mut().intern(key))
 }
 
-fn handle_call_expr(expr: &CallExpr, ctx: &mut SemanticContext) -> Result<TypeId, SemanticError> {
-    resolve_expr_type(&expr.callee, ctx)?;
-    for arg in &expr.args {
-        resolve_expr_type(arg, ctx)?;
+fn handle_call_expr(
+    expr: &Expression,
+    call_expr: &CallExpr,
+    ctx: &mut SemanticContext,
+) -> Result<TypeId, SemanticError> {
+    let callee_type_id = resolve_expr_type(&call_expr.callee, ctx)?;
+    if let Some(callee_type) = ctx.type_registry().lookup(callee_type_id).cloned() {
+        if let TypeInfo::Function { params, ret } = callee_type {
+            if params.len() != call_expr.args.len() {
+                return Err(SemanticError::ArgsCountMismatch {
+                    span: expr.span.clone(),
+                });
+            }
+            for (i, arg) in call_expr.args.iter().enumerate() {
+                let arg_type_id = resolve_expr_type(arg, ctx)?;
+                if arg_type_id != params[i] {
+                    return Err(SemanticError::TypeMismatch {
+                        span: arg.span.clone(),
+                    });
+                }
+            }
+            Ok(ret)
+        } else {
+            panic!("not callable, {:?} ", callee_type);
+        }
+    } else {
+        // TODO: check builtin function
+        Ok(ctx.type_registry_mut().intern(TypeInfo::Void))
     }
-    Ok(ctx.type_registry_mut().intern(TypeInfo::Void))
+}
+
+fn handle_func_expr(
+    expr: &FunctionExpr,
+    ctx: &mut SemanticContext,
+) -> Result<TypeId, SemanticError> {
+    ctx.push_scope();
+    for param in &expr.params {
+        let param_type_id = ctx.resolve_type_expr(&param.typ)?;
+        ctx.declare(
+            param.name,
+            Binding {
+                type_id: param_type_id,
+                mutable: true,
+            },
+        );
+    }
+
+    resolve_expr_type(&expr.body, ctx)?;
+
+    ctx.pop_scope();
+
+    let type_id = ctx.resolve_type_expr(&TypeExpr {
+        kind: TypeExprKind::Function {
+            params: expr.params.iter().cloned().map(|p| p.typ).collect(),
+            ret: expr.return_type.clone().into(),
+        },
+        span: 0..0, // TODO
+    })?;
+    ctx.declare(
+        expr.name,
+        Binding {
+            type_id,
+            mutable: false,
+        },
+    );
+
+    Ok(type_id)
 }
 
 fn handle_block_expr(expr: &BlockExpr, ctx: &mut SemanticContext) -> Result<TypeId, SemanticError> {
@@ -140,12 +207,9 @@ fn handle_block_expr(expr: &BlockExpr, ctx: &mut SemanticContext) -> Result<Type
     for body_expr in &expr.body {
         type_id = Some(resolve_expr_type(body_expr, ctx)?);
     }
+    let type_id = type_id.unwrap_or_else(|| ctx.type_registry_mut().intern(TypeInfo::Void));
     ctx.pop_scope();
-    Ok(if type_id.is_some() {
-        type_id.unwrap()
-    } else {
-        ctx.type_registry_mut().intern(TypeInfo::Void)
-    })
+    Ok(type_id)
 }
 
 fn handle_if_expr(expr: &IfExpr, ctx: &mut SemanticContext) -> Result<TypeId, SemanticError> {

@@ -10,9 +10,13 @@ pub struct CallContext<'a> {
 
 pub type NativeFunction = fn(ctx: &mut CallContext);
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct FunctionId(pub usize);
+
 #[derive(Debug, Clone, Copy)]
 pub enum FunctionKind {
     Native(NativeFunction),
+    Verse(FunctionId),
 }
 
 #[derive(Clone, Debug)]

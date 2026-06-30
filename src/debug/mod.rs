@@ -18,6 +18,7 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: SymbolTa
                 symbol_tbl.resolve(*symbol)
             ),
         ),
+        SemanticError::ArgsCountMismatch { span } => (span, format!("arguments count mismatch")),
     };
 
     let start_pos = get_source_position(src, span.start).unwrap();

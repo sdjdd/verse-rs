@@ -206,19 +206,13 @@ impl<'src> Parser<'src> {
         let mut lhs = self.parse_compare_chain_expr()?;
         let start = lhs.span.clone();
 
-        loop {
-            let typ = match self.peek()? {
-                Token::Colon => {
-                    self.next().unwrap();
-                    let typ = Some(self.parse_type_expr()?);
-                    self.expect(Token::Eq)?;
-                    typ
-                }
-                Token::ColonEq => {
-                    self.next().unwrap();
-                    None
-                }
-                _ => break,
+        if self.consume_if(Token::Colon)? {
+            let typ = if self.consume_if(Token::Eq)? {
+                None
+            } else {
+                let typ = self.parse_type_expr()?;
+                self.expect(Token::Eq)?;
+                Some(typ)
             };
 
             let target: LValue =
@@ -239,7 +233,7 @@ impl<'src> Parser<'src> {
         self.expect(Token::Set)?;
         let start = self.current_token_span.clone();
 
-        let target_expr = self.parse_primary_expr()?;
+        let target_expr = self.parse_expression()?;
         let target: LValue =
             target_expr
                 .try_into()
@@ -314,7 +308,7 @@ impl<'src> Parser<'src> {
 
     fn parse_multiplicative_expr(&mut self) -> ParseResult<Expression> {
         let start = self.current_token_span.clone();
-        let mut lhs = self.parse_call_expr()?;
+        let mut lhs = self.parse_primary_expr()?;
         loop {
             let op = match self.peek()? {
                 Token::Star => BinaryOperator::Mul,
@@ -322,26 +316,10 @@ impl<'src> Parser<'src> {
                 _ => break,
             };
             self.next().unwrap();
-            let rhs = self.parse_call_expr()?;
+            let rhs = self.parse_primary_expr()?;
             lhs = self.make_expr(start.clone(), BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
-    }
-
-    fn parse_call_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.current_token_span.clone();
-        let callee = self.parse_primary_expr()?;
-        if self.consume_if(Token::LParen)? {
-            let mut args = Vec::new();
-            while !self.consume_if(Token::RParen)? {
-                let expr = self.parse_expression()?;
-                args.push(expr);
-                self.consume_if(Token::Comma)?;
-            }
-            Ok(self.make_expr(start, CallExpr::new(callee, args)))
-        } else {
-            Ok(callee)
-        }
     }
 
     fn parse_if_expr(&mut self) -> ParseResult<Expression> {
@@ -435,7 +413,7 @@ impl<'src> Parser<'src> {
 
     fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
         let expr = match self.peek()? {
-            Token::Id => self.parse_identifier_expr()?,
+            Token::Id => self.parse_function_expr()?,
             Token::TemplateHead => self.parse_template_expression()?,
             Token::LParen => self.parse_tuple_expr()?,
             _ => self.parse_literal_expr()?,
@@ -443,11 +421,80 @@ impl<'src> Parser<'src> {
         Ok(expr)
     }
 
-    fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
-        self.expect(Token::Id)?;
+    fn parse_function_expr(&mut self) -> ParseResult<Expression> {
         let start = self.current_token_span.clone();
+        let id = self.parse_identifier_expr()?;
+
+        if self.consume_if(Token::LParen)? {
+            let mut params = vec![];
+            let mut args = vec![];
+            let mut is_func_expr = true;
+
+            while !self.consume_if(Token::RParen)? {
+                if !self.consume_if(Token::Id)? {
+                    is_func_expr = false;
+                    break;
+                }
+
+                let param_name = self.slice();
+                let symbol = self.symbol_table.intern(param_name);
+                args.push(self.make_expr(start.clone(), IdentifierExpr::new(symbol)));
+
+                if !self.consume_if(Token::Colon)? {
+                    is_func_expr = false;
+                    break;
+                }
+
+                params.push(FunctionParam {
+                    name: symbol,
+                    name_span: 0..0,
+                    typ: self.parse_type_expr()?,
+                });
+
+                self.consume_if(Token::Comma)?;
+            }
+
+            if !is_func_expr && !params.is_empty() {
+                return Err(self.unexpected_error());
+            }
+
+            if self.peek()? == Token::Colon {
+                is_func_expr = true;
+            }
+
+            if is_func_expr {
+                self.expect(Token::Colon)?;
+                let return_type = self.parse_type_expr()?;
+                self.expect(Token::Eq)?;
+                let body = if self.consume_if(Token::Newline)? {
+                    self.parse_block()?
+                } else {
+                    self.parse_expression()?
+                };
+                return Ok(self.make_expr(
+                    start.clone(),
+                    FunctionExpr::new(id.symbol, params, return_type, body),
+                ));
+            }
+
+            loop {
+                args.push(self.parse_declaration_expr()?);
+                if !self.consume_if(Token::Comma)? {
+                    break;
+                }
+            }
+            self.expect(Token::RParen)?;
+            let callee = self.make_expr(start.clone(), id);
+            return Ok(self.make_expr(start.clone(), CallExpr::new(callee, args)));
+        }
+
+        Ok(self.make_expr(start.clone(), id))
+    }
+
+    fn parse_identifier_expr(&mut self) -> ParseResult<IdentifierExpr> {
+        self.expect(Token::Id)?;
         let symbol = self.symbol_table.intern(self.slice());
-        Ok(self.make_expr(start, IdentifierExpr::new(symbol)))
+        Ok(IdentifierExpr::new(symbol))
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {

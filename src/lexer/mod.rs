@@ -36,9 +36,6 @@ pub enum Token {
     #[regex(r"\r?\n")]
     Newline,
 
-    #[token(":=")]
-    ColonEq,
-
     #[token(":")]
     Colon,
 
@@ -331,7 +328,7 @@ mod tests {
         let tokens = lex_ok("x := 42");
         assert_eq!(
             tokens,
-            vec![Token::Id, Token::ColonEq, Token::IntegerLiteral]
+            vec![Token::Id, Token::Colon, Token::Eq, Token::IntegerLiteral]
         );
     }
 
@@ -424,7 +421,14 @@ mod tests {
         let tokens = lex_ok(source);
         assert_eq!(
             tokens,
-            vec![Token::Var, Token::Id, Token::Colon, Token::Id, Token::Eq, Token::IntegerLiteral]
+            vec![
+                Token::Var,
+                Token::Id,
+                Token::Colon,
+                Token::Id,
+                Token::Eq,
+                Token::IntegerLiteral
+            ]
         );
     }
 
@@ -511,11 +515,13 @@ mod tests {
             tokens,
             vec![
                 Token::Id,
-                Token::ColonEq,
+                Token::Colon,
+                Token::Eq,
                 Token::IntegerLiteral,
                 Token::Newline,
                 Token::Id,
-                Token::ColonEq,
+                Token::Colon,
+                Token::Eq,
                 Token::IntegerLiteral,
             ]
         );
