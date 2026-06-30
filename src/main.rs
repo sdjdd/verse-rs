@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 
 use verse::debug::{print_parser_error, print_semantic_error};
-use verse::eval::{EvalContext, eval};
+use verse::eval::EvalContext;
 use verse::lexer::IndentAwareLexer;
 use verse::parser::Parser;
 use verse::runtime::Value;
@@ -48,6 +48,6 @@ fn main() {
         program
             .expressions
             .iter()
-            .for_each(|expr| value = eval(expr, &mut ctx));
+            .for_each(|expr| value = ctx.eval(expr));
     }
 }
