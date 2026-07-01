@@ -92,6 +92,7 @@ impl SemanticAnalyzer {
                     mutable: false,
                 },
             );
+            root_scope.types.insert(symbol, type_id);
         }
 
         root_scope.bindings.insert(
