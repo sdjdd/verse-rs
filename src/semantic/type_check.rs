@@ -7,7 +7,6 @@ pub struct TypeId(usize);
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum TypeInfo {
-    Incomplete,
     Void,
     Any,
     Int,
@@ -16,6 +15,7 @@ pub enum TypeInfo {
     Char,
     Char32,
     String,
+
     Tuple(Vec<TypeId>),
     Function { params: Vec<TypeId>, ret: TypeId },
     Option(TypeId),

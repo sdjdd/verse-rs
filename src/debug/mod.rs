@@ -6,7 +6,14 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: SymbolTa
             span,
             format!("cannot find `{}`", symbol_tbl.resolve(*symbol)),
         ),
-        SemanticError::TypeMismatch { span } => (span, format!("type mismatched")),
+        SemanticError::TypeMismatch {
+            span,
+            expect: expected,
+            found: got,
+        } => (
+            span,
+            format!("type mismatched, expected: {:?}, got = {:?}", expected, got),
+        ),
         SemanticError::TypeNotFound { span, symbol } => (
             span,
             format!("cannot find type `{}`", symbol_tbl.resolve(*symbol)),
@@ -19,6 +26,11 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: SymbolTa
             ),
         ),
         SemanticError::ArgsCountMismatch { span } => (span, format!("arguments count mismatch")),
+        SemanticError::UnexpectedExpr {
+            span,
+            expect: expected,
+            found,
+        } => (span, format!("expect {}, found {}", expected, found)),
     };
 
     let start_pos = get_source_position(src, span.start).unwrap();

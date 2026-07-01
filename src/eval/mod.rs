@@ -11,14 +11,14 @@ struct EvalScope {
     bindings: HashMap<Symbol, Value>,
 }
 
-pub struct EvalContext {
+pub struct Evaluator {
     symbol_table: SymbolTable,
     scopes: Vec<EvalScope>,
     functions: HashMap<FunctionId, FunctionExpr>,
     void_funcs: HashSet<FunctionId>,
 }
 
-impl EvalContext {
+impl Evaluator {
     pub fn new(mut symbol_table: SymbolTable, void_funcs: &[FunctionId]) -> Self {
         let mut bindings = HashMap::new();
 
@@ -67,14 +67,6 @@ impl EvalContext {
         None
     }
 
-    fn declare_function(&mut self, id: FunctionId, expr: FunctionExpr) {
-        self.functions.insert(id, expr);
-    }
-
-    fn lookup_function(&self, id: FunctionId) -> Option<&FunctionExpr> {
-        self.functions.get(&id)
-    }
-
     pub fn eval(&mut self, expr: &Expression) -> Result<Value, Failure> {
         match &expr.kind {
             ExprKind::Call(expr) => self.eval_call(expr),
@@ -98,7 +90,7 @@ impl EvalContext {
         }
     }
 
-    fn eval_declaration(&mut self, expr: &DeclarationExpr) -> Result<Value, Failure> {
+    fn eval_declaration(&mut self, expr: &DeclExpr) -> Result<Value, Failure> {
         let value = self.eval(&expr.value)?;
         self.declare(expr.target, value.clone());
         Ok(value)
@@ -120,7 +112,7 @@ impl EvalContext {
         Ok(value)
     }
 
-    fn eval_identifier(&mut self, expr: &IdentifierExpr) -> Result<Value, Failure> {
+    fn eval_identifier(&mut self, expr: &IdExpr) -> Result<Value, Failure> {
         if let Some(value) = self.resolve_symbol(expr.symbol) {
             Ok(value.clone())
         } else {
@@ -129,58 +121,52 @@ impl EvalContext {
     }
 
     fn eval_call(&mut self, expr: &CallExpr) -> Result<Value, Failure> {
-        match &expr.callee.kind {
-            ExprKind::Id(id) => {
-                let value = self.resolve_symbol(id.symbol).unwrap();
-                match value {
-                    Value::Tuple(elements) => self.eval_call_tuple(&elements, &expr.args),
-                    Value::Function { kind } => match kind {
-                        FunctionKind::Native(func) => {
-                            let args: Result<Vec<_>, _> =
-                                expr.args.iter().map(|arg| self.eval(arg)).collect();
-                            args.and_then(|args| {
-                                let mut ctx = CallContext {
-                                    args: &args,
-                                    ret_val: None,
-                                };
-                                func(&mut ctx);
-                                ctx.ret_val
-                                    .unwrap_or(Ok(Value::Void))
-                                    .map_err(|_| Failure())
-                            })
-                        }
-                        FunctionKind::Verse(func_id) => {
-                            self.push_scope();
-
-                            let val = {
-                                let func_expr = self.lookup_function(func_id).unwrap().clone();
-                                let args: Result<Vec<_>, _> =
-                                    expr.args.iter().map(|arg| self.eval(arg)).collect();
-
-                                args.map(|args| {
-                                    for (i, param) in func_expr.params.iter().enumerate() {
-                                        self.declare(param.name, args[i].clone());
-                                    }
-                                })
-                                .and_then(|_| {
-                                    self.eval(&func_expr.body).map(|ret_val| {
-                                        if self.void_funcs.contains(&func_id) {
-                                            Value::Void
-                                        } else {
-                                            ret_val
-                                        }
-                                    })
-                                })
-                            };
-
-                            self.pop_scope();
-
-                            val
-                        }
-                    },
-                    _ => unimplemented!(),
+        match self.eval(&expr.callee)? {
+            Value::Tuple(elements) => self.eval_call_tuple(&elements, &expr.args),
+            Value::Function { kind } => match kind {
+                FunctionKind::Native(func) => {
+                    let args: Result<Vec<_>, _> =
+                        expr.args.iter().map(|arg| self.eval(arg)).collect();
+                    args.and_then(|args| {
+                        let mut ctx = CallContext {
+                            args: &args,
+                            ret_val: None,
+                        };
+                        func(&mut ctx);
+                        ctx.ret_val
+                            .unwrap_or(Ok(Value::Void))
+                            .map_err(|_| Failure())
+                    })
                 }
-            }
+                FunctionKind::Verse(func_id) => {
+                    self.push_scope();
+
+                    let val = {
+                        let func_expr = self.functions[&func_id].clone();
+                        let args: Result<Vec<_>, _> =
+                            expr.args.iter().map(|arg| self.eval(arg)).collect();
+
+                        args.map(|args| {
+                            for (i, param) in func_expr.params.iter().enumerate() {
+                                self.declare(param.name, args[i].clone());
+                            }
+                        })
+                        .and_then(|_| {
+                            self.eval(&func_expr.body).map(|ret_val| {
+                                if self.void_funcs.contains(&func_id) {
+                                    Value::Void
+                                } else {
+                                    ret_val
+                                }
+                            })
+                        })
+                    };
+
+                    self.pop_scope();
+
+                    val
+                }
+            },
             _ => unimplemented!(),
         }
     }
@@ -368,7 +354,7 @@ impl EvalContext {
                 kind: FunctionKind::Verse(FunctionId(expr_id.0)),
             },
         );
-        self.declare_function(FunctionId(expr_id.0), expr.clone());
+        self.functions.insert(FunctionId(expr_id.0), expr.clone());
         Ok(Value::Function {
             kind: FunctionKind::Verse(FunctionId(expr_id.0)),
         })

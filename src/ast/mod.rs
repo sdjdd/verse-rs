@@ -14,8 +14,8 @@ pub struct Expression {
 
 #[derive(Debug, Clone, From)]
 pub enum ExprKind {
-    Id(IdentifierExpr),
-    Decl(DeclarationExpr),
+    Id(IdExpr),
+    Decl(DeclExpr),
     VarDecl(VarDeclExpr),
     Set(SetExpr),
     Integer(i64),
@@ -51,13 +51,13 @@ pub struct TypeExpr {
 }
 
 #[derive(Debug, Clone, Constructor)]
-pub struct IdentifierExpr {
+pub struct IdExpr {
     pub symbol: Symbol,
 }
 
 #[derive(Debug, Clone)]
 pub enum LValueKind {
-    Id(IdentifierExpr),
+    Id(IdExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -81,13 +81,13 @@ impl TryFrom<Expression> for LValue {
 }
 
 #[derive(Debug, Clone)]
-pub struct DeclarationExpr {
+pub struct DeclExpr {
     pub target: Symbol,
     pub typ: Option<TypeExpr>,
     pub value: Box<Expression>,
 }
 
-impl DeclarationExpr {
+impl DeclExpr {
     pub fn new(target: Symbol, typ: Option<TypeExpr>, value: Expression) -> Self {
         Self {
             target,
@@ -114,13 +114,13 @@ impl SetExpr {
 
 #[derive(Debug, Clone)]
 pub struct VarDeclExpr {
-    pub name: IdentifierExpr,
+    pub name: IdExpr,
     pub typ: TypeExpr,
     pub expr: Box<Expression>,
 }
 
 impl VarDeclExpr {
-    pub fn new(name: IdentifierExpr, typ: TypeExpr, expr: Expression) -> Self {
+    pub fn new(name: IdExpr, typ: TypeExpr, expr: Expression) -> Self {
         Self {
             name,
             typ,
@@ -235,7 +235,6 @@ pub struct BlockExpr {
 #[derive(Debug, Clone)]
 pub struct FunctionParam {
     pub name: Symbol,
-    pub name_span: Span,
     pub typ: TypeExpr,
 }
 

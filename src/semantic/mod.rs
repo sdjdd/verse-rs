@@ -192,11 +192,11 @@ impl SemanticContext {
             ExprKind::If(e) => self.handle_if_expr(expr, e),
             ExprKind::Func(e) => self.handle_func_expr(expr, e),
             ExprKind::Call(e) => self.handle_call_expr(expr, e),
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", expr.kind),
         }
     }
 
-    fn handle_decl_expr(&mut self, outer: &Expression, expr: &DeclarationExpr) {
+    fn handle_decl_expr(&mut self, outer: &Expression, expr: &DeclExpr) {
         self.handle_expr(&expr.value);
         let value_type = self.get_expr_type(expr.value.id);
 
@@ -205,6 +205,8 @@ impl SemanticContext {
             if decl_type != value_type {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: expr.value.span.clone(),
+                    expect: decl_type,
+                    found: value_type,
                 })
             }
             self.expr_type.insert(outer.id, decl_type);
@@ -230,6 +232,8 @@ impl SemanticContext {
         if decl_type != value_type {
             self.errors.push(SemanticError::TypeMismatch {
                 span: expr.expr.span.clone(),
+                expect: decl_type,
+                found: value_type,
             })
         }
 
@@ -256,6 +260,8 @@ impl SemanticContext {
                     if binding.type_id != value_type {
                         self.errors.push(SemanticError::TypeMismatch {
                             span: expr.expr.span.clone(),
+                            expect: binding.type_id,
+                            found: value_type,
                         })
                     }
                     if !binding.mutable {
@@ -271,7 +277,7 @@ impl SemanticContext {
         self.expr_type.insert(outer.id, type_id);
     }
 
-    fn handle_id_expr(&mut self, outer: &Expression, expr: &IdentifierExpr) {
+    fn handle_id_expr(&mut self, outer: &Expression, expr: &IdExpr) {
         let type_id = if let Some(binding) = self.loopup(&expr.symbol) {
             binding.type_id
         } else {
@@ -300,9 +306,12 @@ impl SemanticContext {
         let head_type = self.get_expr_type(expr.head.id);
         for (_, expr) in &expr.rest {
             self.handle_expr(expr);
-            if self.get_expr_type(expr.id) != head_type {
+            let item_type = self.get_expr_type(expr.id);
+            if item_type != head_type {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: expr.span.clone(),
+                    expect: head_type,
+                    found: item_type,
                 })
             }
         }
@@ -373,9 +382,12 @@ impl SemanticContext {
         self.pop_scope();
 
         if return_type != self.builtin_types.t_void {
-            if self.get_expr_type(expr.body.id) != return_type {
+            let body_type = self.get_expr_type(expr.body.id);
+            if body_type != return_type {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: expr.body.span.clone(),
+                    expect: return_type,
+                    found: body_type,
                 })
             }
         } else {
@@ -417,6 +429,8 @@ impl SemanticContext {
                         if param_type != arg_type {
                             self.errors.push(SemanticError::TypeMismatch {
                                 span: arg.span.clone(),
+                                expect: param_type,
+                                found: arg_type,
                             })
                         }
                     }
@@ -424,10 +438,26 @@ impl SemanticContext {
                 TypeInfo::Any => {
                     // TODO: handle builtin functions
                 }
+                TypeInfo::Tuple(elements) => {
+                    if expr.args.len() == 1 {
+                        self.handle_expr(&expr.args[0]);
+                        if let ExprKind::Integer(index) = expr.args[0].kind {
+                            return_type = elements[index as usize];
+                        } else {
+                            self.errors.push(SemanticError::UnexpectedExpr {
+                                span: expr.args[0].span.clone(),
+                                expect: "integer".to_string(),
+                                found: format!("{:?}", expr.args[0]),
+                            });
+                        }
+                    } else {
+                        self.errors.push(SemanticError::ArgsCountMismatch {
+                            span: outer.span.clone(),
+                        });
+                    }
+                }
                 _ => {
-                    self.errors.push(SemanticError::TypeMismatch {
-                        span: expr.callee.span.clone(),
-                    });
+                    panic!("not callable")
                 }
             }
         }
@@ -442,7 +472,11 @@ pub enum SemanticError {
     Mutability { span: Span, symbol: Symbol },
 
     #[error("{span:?} mismatched types")]
-    TypeMismatch { span: Span },
+    TypeMismatch {
+        span: Span,
+        expect: TypeId,
+        found: TypeId,
+    },
 
     #[error("{span:?} cannot resolve value {symbol:?}")]
     Reference { span: Span, symbol: Symbol },
@@ -452,4 +486,11 @@ pub enum SemanticError {
 
     #[error("{span:?} arguments count mismatch")]
     ArgsCountMismatch { span: Span },
+
+    #[error("{span:?} unexpected expression")]
+    UnexpectedExpr {
+        span: Span,
+        expect: String,
+        found: String,
+    },
 }

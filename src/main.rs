@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 
 use verse::debug::{print_parser_error, print_semantic_error};
-use verse::eval::EvalContext;
+use verse::eval::Evaluator;
 use verse::lexer::IndentAwareLexer;
 use verse::parser::Parser;
 use verse::runtime::Value;
@@ -40,7 +40,7 @@ fn main() {
         print_semantic_error(&err, &source, parser.get_symbol_table().clone());
     }
     if semantic_ctx.errors.is_empty() {
-        let mut ctx = EvalContext::new(
+        let mut ctx = Evaluator::new(
             parser.get_symbol_table().clone(),
             semantic_ctx.get_void_functions(),
         );
@@ -49,5 +49,6 @@ fn main() {
             .expressions
             .iter()
             .for_each(|expr| value = ctx.eval(expr));
+        println!("{:?}", value);
     }
 }
