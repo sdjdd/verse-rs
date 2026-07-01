@@ -6,16 +6,85 @@ use crate::{
     core::{Symbol, SymbolTable},
     lexer::Span,
     runtime::FunctionId,
-    semantic::{
-        builtins::{BuiltinSymbols, BuiltinTypes},
-        type_check::{TypeId, TypeInfo, TypeRegistry},
-    },
+    semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
 
 pub mod builtins;
-pub mod type_check;
 
 mod binary_expr;
+
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub struct TypeId(usize);
+
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+pub enum TypeInfo {
+    Void,
+    Any,
+    Int,
+    Float,
+    Logic,
+    Char,
+    Char32,
+    String,
+
+    Tuple(Vec<TypeId>),
+    Function { params: Vec<TypeId>, ret: TypeId },
+    Option(TypeId),
+    Named(Symbol),
+}
+
+#[derive(Default, Debug)]
+pub struct TypeRegistry {
+    map: HashMap<TypeInfo, TypeId>,
+    vec: Vec<TypeInfo>,
+    alias: HashMap<TypeId, TypeId>,
+}
+
+impl TypeRegistry {
+    pub fn intern(&mut self, key: TypeInfo) -> TypeId {
+        if let Some(&id) = self.map.get(&key) {
+            return id;
+        }
+
+        let key = match &key {
+            TypeInfo::Tuple(element_ids) => {
+                TypeInfo::Tuple(element_ids.iter().map(|&id| self.resolve_id(id)).collect())
+            }
+            _ => key,
+        };
+
+        let id = TypeId(self.vec.len());
+        self.map.insert(key.clone(), id);
+        self.vec.push(key);
+        id
+    }
+
+    pub fn set_alias(&mut self, src: TypeId, dst: TypeId) {
+        self.alias.insert(dst, src);
+    }
+
+    pub fn resolve_id(&self, mut id: TypeId) -> TypeId {
+        loop {
+            if let Some(&src_id) = self.alias.get(&id) {
+                id = src_id
+            } else {
+                break id;
+            }
+        }
+    }
+
+    pub fn resolve(&self, type_info: &TypeInfo) -> Option<TypeId> {
+        if let Some(&id) = self.map.get(type_info) {
+            Some(self.resolve_id(id))
+        } else {
+            None
+        }
+    }
+
+    pub fn lookup(&self, type_id: TypeId) -> Option<&TypeInfo> {
+        self.vec.get(type_id.0)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Binding {
@@ -29,7 +98,7 @@ pub struct Scope {
     bindings: HashMap<Symbol, Binding>,
 }
 
-pub struct SemanticContext {
+pub struct SemanticAnalyzer {
     expr_type: HashMap<ExprId, TypeId>,
     scopes: Vec<Scope>,
     primitive_types: HashMap<Symbol, TypeId>,
@@ -38,7 +107,7 @@ pub struct SemanticContext {
     void_functions: Vec<FunctionId>,
 }
 
-impl SemanticContext {
+impl SemanticAnalyzer {
     pub fn new(symbol_table: &mut SymbolTable) -> Self {
         let mut root_scope = Scope::default();
         let mut primitive_types = HashMap::new();
@@ -122,36 +191,31 @@ impl SemanticContext {
         None
     }
 
-    pub fn resolve_type_expr(&mut self, type_expr: &TypeExpr) -> TypeId {
+    pub fn intern_type_expr(&mut self, type_expr: &TypeExpr) -> TypeId {
         match &type_expr.kind {
-            TypeExprKind::Named(symbol) => {
-                let scope = self.scopes.last().unwrap();
-                self.primitive_types
-                    .get(symbol)
-                    .copied()
-                    .or_else(|| scope.types.resolve(&TypeInfo::Named(*symbol)))
-                    .unwrap_or(self.builtin_types.t_any)
-            }
+            TypeExprKind::Named(symbol) => self
+                .primitive_types
+                .get(symbol)
+                .copied()
+                .or_else(|| self.type_registry_mut().resolve(&TypeInfo::Named(*symbol)))
+                .unwrap_or(self.builtin_types.t_any),
             TypeExprKind::Tuple(args) => {
                 let mut arg_ids = vec![];
                 for arg in args {
-                    let arg_id = self.resolve_type_expr(arg);
+                    let arg_id = self.intern_type_expr(arg);
                     arg_ids.push(arg_id);
                 }
                 let scope = self.scopes.last_mut().unwrap();
-                let type_id = scope.types.intern(TypeInfo::Tuple(arg_ids));
-                type_id
+                scope.types.intern(TypeInfo::Tuple(arg_ids))
             }
             TypeExprKind::Function { params, ret } => {
-                let param_types: Vec<_> =
-                    params.iter().map(|p| self.resolve_type_expr(p)).collect();
-                let return_type = self.resolve_type_expr(ret);
+                let param_types: Vec<_> = params.iter().map(|p| self.intern_type_expr(p)).collect();
+                let return_type = self.intern_type_expr(ret);
                 let scope = self.scopes.last_mut().unwrap();
-                let type_id = scope.types.intern(TypeInfo::Function {
+                scope.types.intern(TypeInfo::Function {
                     params: param_types,
                     ret: return_type,
-                });
-                type_id
+                })
             }
         }
     }
@@ -203,7 +267,7 @@ impl SemanticContext {
         let value_type = self.get_expr_type(expr.value.id);
 
         if let Some(typ) = &expr.typ {
-            let decl_type = self.resolve_type_expr(typ);
+            let decl_type = self.intern_type_expr(typ);
             if decl_type != value_type {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: expr.value.span.clone(),
@@ -228,7 +292,7 @@ impl SemanticContext {
     fn handle_var_decl_expr(&mut self, outer: &Expression, expr: &VarDeclExpr) {
         self.handle_expr(&expr.expr);
 
-        let decl_type = self.resolve_type_expr(&expr.typ);
+        let decl_type = self.intern_type_expr(&expr.typ);
         let value_type = self.get_expr_type(expr.expr.id);
 
         if decl_type != value_type {
@@ -366,11 +430,11 @@ impl SemanticContext {
 
     fn handle_func_expr(&mut self, outer: &Expression, expr: &FunctionExpr) {
         let mut param_types = vec![];
-        let return_type = self.resolve_type_expr(&expr.return_type);
+        let return_type = self.intern_type_expr(&expr.return_type);
 
         self.push_scope();
         for param in &expr.params {
-            let param_type = self.resolve_type_expr(&param.typ);
+            let param_type = self.intern_type_expr(&param.typ);
             param_types.push(param_type);
             self.declare(
                 param.name,

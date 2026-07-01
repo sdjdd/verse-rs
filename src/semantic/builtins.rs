@@ -1,6 +1,6 @@
 use crate::{
     core::{Symbol, SymbolTable},
-    semantic::type_check::{TypeId, TypeInfo, TypeRegistry},
+    semantic::{TypeId, TypeInfo, TypeRegistry},
 };
 
 pub struct BuiltinSymbols {

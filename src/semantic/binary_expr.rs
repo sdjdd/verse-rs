@@ -1,9 +1,9 @@
 use crate::{
     ast::{BinaryExpr, Expression},
-    semantic::{SemanticContext, SemanticError},
+    semantic::{SemanticAnalyzer, SemanticError},
 };
 
-impl SemanticContext {
+impl SemanticAnalyzer {
     pub(super) fn handle_binary_expr(&mut self, outer: &Expression, expr: &BinaryExpr) {
         self.handle_expr(&expr.lhs);
         self.handle_expr(&expr.rhs);

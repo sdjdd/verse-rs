@@ -7,7 +7,7 @@ use verse::eval::Evaluator;
 use verse::lexer::IndentAwareLexer;
 use verse::parser::Parser;
 use verse::runtime::Value;
-use verse::semantic::SemanticContext;
+use verse::semantic::SemanticAnalyzer;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -31,7 +31,7 @@ fn main() {
 
     // println!("{:#?}", program.expressions);
 
-    let mut semantic_ctx = SemanticContext::new(parser.get_symbol_table_mut());
+    let mut semantic_ctx = SemanticAnalyzer::new(parser.get_symbol_table_mut());
 
     for expr in &program.expressions {
         semantic_ctx.handle_expr(expr)
