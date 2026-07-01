@@ -8,11 +8,11 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: SymbolTa
         ),
         SemanticError::TypeMismatch {
             span,
-            expect: expected,
-            found: got,
+            expect,
+            found,
         } => (
             span,
-            format!("type mismatched, expected: {:?}, got = {:?}", expected, got),
+            format!("type mismatched, expect: {:?}, found = {:?}", expect, found),
         ),
         SemanticError::TypeNotFound { span, symbol } => (
             span,

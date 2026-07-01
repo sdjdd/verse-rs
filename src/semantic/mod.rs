@@ -174,6 +174,14 @@ impl SemanticAnalyzer {
         false
     }
 
+    fn emit_type_mismatch_error(&mut self, span: Span, expect: TypeId, found: TypeId) {
+        self.errors.push(SemanticError::TypeMismatch {
+            span,
+            expect: self.lookup_type(expect).clone(),
+            found: self.lookup_type(found).clone(),
+        });
+    }
+
     pub fn intern_type_expr(&mut self, type_expr: &TypeExpr) -> TypeId {
         match &type_expr.kind {
             TypeExprKind::Named(symbol) => {
@@ -251,14 +259,12 @@ impl SemanticAnalyzer {
         self.handle_expr(&expr.value);
         let value_type = self.get_expr_type(expr.value.id);
 
-        let binding_type = if let Some(typ) = &expr.typ {
+        let binding_type = if let Some(typ) = &expr.typ
+            && !matches!(typ.kind, TypeExprKind::Type)
+        {
             let decl_type = self.intern_type_expr(typ);
             if !self.is_assignable_to(value_type, decl_type) {
-                self.errors.push(SemanticError::TypeMismatch {
-                    span: expr.value.span.clone(),
-                    expect: decl_type,
-                    found: value_type,
-                })
+                self.emit_type_mismatch_error(expr.value.span.clone(), decl_type, value_type);
             }
             decl_type
         } else {
@@ -285,11 +291,7 @@ impl SemanticAnalyzer {
         let value_type = self.get_expr_type(expr.expr.id);
 
         if !self.is_assignable_to(value_type, decl_type) {
-            self.errors.push(SemanticError::TypeMismatch {
-                span: expr.expr.span.clone(),
-                expect: decl_type,
-                found: value_type,
-            })
+            self.emit_type_mismatch_error(expr.expr.span.clone(), decl_type, value_type);
         }
 
         self.declare(
@@ -313,11 +315,11 @@ impl SemanticAnalyzer {
                 if let Some(binding) = self.lookup(&id_expr.symbol).cloned() {
                     type_id = binding.type_id;
                     if binding.type_id != value_type {
-                        self.errors.push(SemanticError::TypeMismatch {
-                            span: expr.expr.span.clone(),
-                            expect: binding.type_id,
-                            found: value_type,
-                        })
+                        self.emit_type_mismatch_error(
+                            expr.expr.span.clone(),
+                            binding.type_id,
+                            value_type,
+                        );
                     }
                     if !binding.mutable {
                         self.errors.push(SemanticError::Mutability {
@@ -363,11 +365,7 @@ impl SemanticAnalyzer {
             self.handle_expr(expr);
             let item_type = self.get_expr_type(expr.id);
             if item_type != head_type {
-                self.errors.push(SemanticError::TypeMismatch {
-                    span: expr.span.clone(),
-                    expect: head_type,
-                    found: item_type,
-                })
+                self.emit_type_mismatch_error(expr.span.clone(), head_type, item_type);
             }
         }
         self.expr_type.insert(outer.id, head_type);
@@ -439,11 +437,7 @@ impl SemanticAnalyzer {
         if return_type != self.builtin_types.t_void {
             let body_type = self.get_expr_type(expr.body.id);
             if body_type != return_type {
-                self.errors.push(SemanticError::TypeMismatch {
-                    span: expr.body.span.clone(),
-                    expect: return_type,
-                    found: body_type,
-                })
+                self.emit_type_mismatch_error(expr.body.span.clone(), return_type, body_type);
             }
         } else {
             self.void_functions.push(FunctionId(outer.id.0));
@@ -481,11 +475,7 @@ impl SemanticAnalyzer {
                     self.handle_expr(arg);
                     let arg_type = self.get_expr_type(arg.id);
                     if !self.is_assignable_to(arg_type, param_type) {
-                        self.errors.push(SemanticError::TypeMismatch {
-                            span: arg.span.clone(),
-                            expect: param_type,
-                            found: arg_type,
-                        })
+                        self.emit_type_mismatch_error(arg.span.clone(), param_type, arg_type);
                     }
                 }
             }
@@ -527,8 +517,8 @@ pub enum SemanticError {
     #[error("{span:?} mismatched types")]
     TypeMismatch {
         span: Span,
-        expect: TypeId,
-        found: TypeId,
+        expect: TypeInfo,
+        found: TypeInfo,
     },
 
     #[error("{span:?} cannot resolve value {symbol:?}")]

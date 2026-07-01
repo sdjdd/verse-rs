@@ -1,6 +1,6 @@
 use crate::{
     ast::{BinaryExpr, Expression},
-    semantic::{SemanticAnalyzer, SemanticError},
+    semantic::SemanticAnalyzer,
 };
 
 impl SemanticAnalyzer {
@@ -13,11 +13,7 @@ impl SemanticAnalyzer {
         if lhs_type == rhs_type {
             self.expr_type.insert(outer.id, lhs_type);
         } else {
-            self.errors.push(SemanticError::TypeMismatch {
-                span: outer.span.clone(),
-                expect: lhs_type,
-                found: rhs_type,
-            });
+            self.emit_type_mismatch_error(outer.span.clone(), lhs_type, rhs_type);
             self.expr_type.insert(outer.id, self.builtin_types.t_any);
         }
     }
