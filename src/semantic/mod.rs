@@ -15,6 +15,8 @@ use crate::{
 pub mod builtins;
 pub mod type_check;
 
+mod binary_expr;
+
 #[derive(Clone, Copy)]
 pub struct Binding {
     pub type_id: TypeId,
@@ -192,7 +194,7 @@ impl SemanticContext {
             ExprKind::If(e) => self.handle_if_expr(expr, e),
             ExprKind::Func(e) => self.handle_func_expr(expr, e),
             ExprKind::Call(e) => self.handle_call_expr(expr, e),
-            _ => unimplemented!("{:?}", expr.kind),
+            ExprKind::Binary(e) => self.handle_binary_expr(expr, e),
         }
     }
 
