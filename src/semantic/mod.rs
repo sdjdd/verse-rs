@@ -5,16 +5,13 @@ use crate::{
     ast::*,
     core::{Symbol, SymbolTable},
     lexer::Span,
-    runtime::FunctionId,
+    runtime::{FunctionId, TypeId},
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
 
 pub mod builtins;
 
 mod binary_expr;
-
-#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
-pub struct TypeId(usize);
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum TypeInfo {
@@ -30,14 +27,14 @@ pub enum TypeInfo {
     Tuple(Vec<TypeId>),
     Function { params: Vec<TypeId>, ret: TypeId },
     Option(TypeId),
-    Named(Symbol),
+
+    Type(TypeId),
 }
 
 #[derive(Default, Debug)]
 pub struct TypeRegistry {
     map: HashMap<TypeInfo, TypeId>,
     vec: Vec<TypeInfo>,
-    alias: HashMap<TypeId, TypeId>,
 }
 
 impl TypeRegistry {
@@ -46,42 +43,13 @@ impl TypeRegistry {
             return id;
         }
 
-        let key = match &key {
-            TypeInfo::Tuple(element_ids) => {
-                TypeInfo::Tuple(element_ids.iter().map(|&id| self.resolve_id(id)).collect())
-            }
-            _ => key,
-        };
-
         let id = TypeId(self.vec.len());
         self.map.insert(key.clone(), id);
         self.vec.push(key);
         id
     }
 
-    pub fn set_alias(&mut self, src: TypeId, dst: TypeId) {
-        self.alias.insert(dst, src);
-    }
-
-    pub fn resolve_id(&self, mut id: TypeId) -> TypeId {
-        loop {
-            if let Some(&src_id) = self.alias.get(&id) {
-                id = src_id
-            } else {
-                break id;
-            }
-        }
-    }
-
-    pub fn resolve(&self, type_info: &TypeInfo) -> Option<TypeId> {
-        if let Some(&id) = self.map.get(type_info) {
-            Some(self.resolve_id(id))
-        } else {
-            None
-        }
-    }
-
-    pub fn lookup(&self, type_id: TypeId) -> Option<&TypeInfo> {
+    fn lookup(&self, type_id: TypeId) -> Option<&TypeInfo> {
         self.vec.get(type_id.0)
     }
 }
@@ -94,56 +62,54 @@ pub struct Binding {
 
 #[derive(Default)]
 pub struct Scope {
-    types: TypeRegistry,
     bindings: HashMap<Symbol, Binding>,
+    types: HashMap<Symbol, TypeId>,
 }
 
 pub struct SemanticAnalyzer {
     expr_type: HashMap<ExprId, TypeId>,
     scopes: Vec<Scope>,
-    primitive_types: HashMap<Symbol, TypeId>,
-    builtin_types: BuiltinTypes,
+    pub builtin_symbols: BuiltinSymbols,
+    pub builtin_types: BuiltinTypes,
     pub errors: Vec<SemanticError>,
     void_functions: Vec<FunctionId>,
+    types: TypeRegistry,
 }
 
 impl SemanticAnalyzer {
     pub fn new(symbol_table: &mut SymbolTable) -> Self {
         let mut root_scope = Scope::default();
-        let mut primitive_types = HashMap::new();
+        let mut types = TypeRegistry::default();
 
         let bs = BuiltinSymbols::install(symbol_table);
-        let primitive_type_map = [
-            (bs.s_int, TypeInfo::Int),
-            (bs.s_float, TypeInfo::Float),
-            (bs.s_char, TypeInfo::Char),
-            (bs.s_char32, TypeInfo::Char32),
-            (bs.s_logic, TypeInfo::Logic),
-            (bs.s_string, TypeInfo::String),
-            (bs.s_void, TypeInfo::Void),
-        ];
+        let bt = BuiltinTypes::install(&mut types);
 
-        for (symbol, type_info) in primitive_type_map {
-            primitive_types.insert(symbol, root_scope.types.intern(type_info));
+        for (symbol, type_id) in bt.pairs(&bs) {
+            root_scope.bindings.insert(
+                symbol,
+                Binding {
+                    type_id: types.intern(TypeInfo::Type(type_id)),
+                    mutable: false,
+                },
+            );
         }
 
         root_scope.bindings.insert(
             bs.s_print,
             Binding {
-                type_id: root_scope.types.intern(TypeInfo::Any),
+                type_id: types.intern(TypeInfo::Any),
                 mutable: false,
             },
         );
 
-        let bt = BuiltinTypes::install(&mut root_scope.types);
-
         Self {
             expr_type: HashMap::new(),
             scopes: vec![root_scope],
-            primitive_types,
+            builtin_symbols: bs,
             builtin_types: bt,
             errors: vec![],
             void_functions: vec![],
+            types,
         }
     }
 
@@ -167,7 +133,7 @@ impl SemanticAnalyzer {
             .insert(symbol, binding);
     }
 
-    fn loopup(&mut self, symbol: &Symbol) -> Option<&Binding> {
+    fn lookup(&mut self, symbol: &Symbol) -> Option<&Binding> {
         for scope in self.scopes.iter().rev() {
             let binding = scope.bindings.get(symbol);
             if binding.is_some() {
@@ -177,46 +143,65 @@ impl SemanticAnalyzer {
         None
     }
 
-    pub fn type_registry_mut(&mut self) -> &mut TypeRegistry {
-        &mut self.scopes.last_mut().unwrap().types
+    fn declare_type(&mut self, symbol: Symbol, type_id: TypeId) {
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .types
+            .insert(symbol, type_id);
     }
 
-    pub fn lookup_type(&self, type_id: TypeId) -> Option<&TypeInfo> {
-        for scope in self.scopes.iter().rev() {
-            let v = scope.types.lookup(type_id);
-            if v.is_some() {
-                return v;
-            }
+    pub fn lookup_type(&self, type_id: TypeId) -> &TypeInfo {
+        self.types
+            .lookup(type_id)
+            .expect("SemanticAnalyzer is not correctly setup or type_id is invalid.")
+    }
+
+    pub fn lookup_type_by_symbol(&self, symbol: Symbol) -> Option<TypeId> {
+        self.scopes
+            .iter()
+            .rev()
+            .map(|scope| scope.types.get(&symbol).copied())
+            .find(|v| v.is_some())
+            .flatten()
+    }
+
+    fn is_assignable_to(&self, from: TypeId, to: TypeId) -> bool {
+        if from == to || to == self.builtin_types.t_any {
+            return true;
         }
-        None
+
+        false
     }
 
     pub fn intern_type_expr(&mut self, type_expr: &TypeExpr) -> TypeId {
         match &type_expr.kind {
-            TypeExprKind::Named(symbol) => self
-                .primitive_types
-                .get(symbol)
-                .copied()
-                .or_else(|| self.type_registry_mut().resolve(&TypeInfo::Named(*symbol)))
-                .unwrap_or(self.builtin_types.t_any),
+            TypeExprKind::Named(symbol) => {
+                self.lookup_type_by_symbol(*symbol).unwrap_or_else(|| {
+                    self.errors.push(SemanticError::TypeNotFound {
+                        span: type_expr.span.clone(),
+                        symbol: *symbol,
+                    });
+                    self.builtin_types.t_any
+                })
+            }
             TypeExprKind::Tuple(args) => {
                 let mut arg_ids = vec![];
                 for arg in args {
                     let arg_id = self.intern_type_expr(arg);
                     arg_ids.push(arg_id);
                 }
-                let scope = self.scopes.last_mut().unwrap();
-                scope.types.intern(TypeInfo::Tuple(arg_ids))
+                self.types.intern(TypeInfo::Tuple(arg_ids))
             }
             TypeExprKind::Function { params, ret } => {
                 let param_types: Vec<_> = params.iter().map(|p| self.intern_type_expr(p)).collect();
                 let return_type = self.intern_type_expr(ret);
-                let scope = self.scopes.last_mut().unwrap();
-                scope.types.intern(TypeInfo::Function {
+                self.types.intern(TypeInfo::Function {
                     params: param_types,
                     ret: return_type,
                 })
             }
+            TypeExprKind::Type => self.builtin_types.t_any,
         }
     }
 
@@ -266,27 +251,31 @@ impl SemanticAnalyzer {
         self.handle_expr(&expr.value);
         let value_type = self.get_expr_type(expr.value.id);
 
-        if let Some(typ) = &expr.typ {
+        let binding_type = if let Some(typ) = &expr.typ {
             let decl_type = self.intern_type_expr(typ);
-            if decl_type != value_type {
+            if !self.is_assignable_to(value_type, decl_type) {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: expr.value.span.clone(),
                     expect: decl_type,
                     found: value_type,
                 })
             }
-            self.expr_type.insert(outer.id, decl_type);
+            decl_type
         } else {
-            self.expr_type.insert(outer.id, value_type);
-        }
+            value_type
+        };
 
-        self.declare(
-            expr.target,
-            Binding {
-                type_id: value_type,
-                mutable: false,
-            },
-        );
+        self.expr_type.insert(outer.id, binding_type);
+
+        let binding = Binding {
+            type_id: binding_type,
+            mutable: false,
+        };
+        self.declare(expr.target, binding);
+
+        if let TypeInfo::Type(inner_type) = self.lookup_type(binding_type) {
+            self.declare_type(expr.target, *inner_type);
+        }
     }
 
     fn handle_var_decl_expr(&mut self, outer: &Expression, expr: &VarDeclExpr) {
@@ -295,7 +284,7 @@ impl SemanticAnalyzer {
         let decl_type = self.intern_type_expr(&expr.typ);
         let value_type = self.get_expr_type(expr.expr.id);
 
-        if decl_type != value_type {
+        if !self.is_assignable_to(value_type, decl_type) {
             self.errors.push(SemanticError::TypeMismatch {
                 span: expr.expr.span.clone(),
                 expect: decl_type,
@@ -321,7 +310,7 @@ impl SemanticAnalyzer {
 
         match &expr.target.kind {
             LValueKind::Id(id_expr) => {
-                if let Some(binding) = self.loopup(&id_expr.symbol).cloned() {
+                if let Some(binding) = self.lookup(&id_expr.symbol).cloned() {
                     type_id = binding.type_id;
                     if binding.type_id != value_type {
                         self.errors.push(SemanticError::TypeMismatch {
@@ -344,7 +333,7 @@ impl SemanticAnalyzer {
     }
 
     fn handle_id_expr(&mut self, outer: &Expression, expr: &IdExpr) {
-        let type_id = if let Some(binding) = self.loopup(&expr.symbol) {
+        let type_id = if let Some(binding) = self.lookup(&expr.symbol).cloned() {
             binding.type_id
         } else {
             self.errors.push(SemanticError::Reference {
@@ -400,7 +389,7 @@ impl SemanticAnalyzer {
             self.handle_expr(elem);
             elem_types.push(self.get_expr_type(elem.id));
         }
-        let type_id = self.type_registry_mut().intern(TypeInfo::Tuple(elem_types));
+        let type_id = self.types.intern(TypeInfo::Tuple(elem_types));
         self.expr_type.insert(outer.id, type_id);
     }
 
@@ -422,7 +411,7 @@ impl SemanticAnalyzer {
                 type_id = self.builtin_types.t_any;
             }
         } else {
-            type_id = self.type_registry_mut().intern(TypeInfo::Option(type_id))
+            type_id = self.types.intern(TypeInfo::Option(type_id))
         }
 
         self.expr_type.insert(outer.id, type_id);
@@ -460,7 +449,7 @@ impl SemanticAnalyzer {
             self.void_functions.push(FunctionId(outer.id.0));
         }
 
-        let type_id = self.type_registry_mut().intern(TypeInfo::Function {
+        let type_id = self.types.intern(TypeInfo::Function {
             params: param_types,
             ret: return_type,
         });
@@ -480,51 +469,49 @@ impl SemanticAnalyzer {
         let callee_type = self.get_expr_type(expr.callee.id);
         let mut return_type = self.builtin_types.t_any;
 
-        if let Some(callee_type) = self.lookup_type(callee_type).cloned() {
-            match callee_type {
-                TypeInfo::Function { params, ret } => {
-                    return_type = ret;
-                    if params.len() != expr.args.len() {
-                        self.errors.push(SemanticError::ArgsCountMismatch {
-                            span: expr.callee.span.clone(),
+        match self.lookup_type(callee_type).clone() {
+            TypeInfo::Function { params, ret } => {
+                return_type = ret;
+                if params.len() != expr.args.len() {
+                    self.errors.push(SemanticError::ArgsCountMismatch {
+                        span: expr.callee.span.clone(),
+                    })
+                }
+                for (&param_type, arg) in params.iter().zip(expr.args.iter()) {
+                    self.handle_expr(arg);
+                    let arg_type = self.get_expr_type(arg.id);
+                    if !self.is_assignable_to(arg_type, param_type) {
+                        self.errors.push(SemanticError::TypeMismatch {
+                            span: arg.span.clone(),
+                            expect: param_type,
+                            found: arg_type,
                         })
                     }
-                    for (&param_type, arg) in params.iter().zip(expr.args.iter()) {
-                        self.handle_expr(arg);
-                        let arg_type = self.get_expr_type(arg.id);
-                        if param_type != arg_type {
-                            self.errors.push(SemanticError::TypeMismatch {
-                                span: arg.span.clone(),
-                                expect: param_type,
-                                found: arg_type,
-                            })
-                        }
-                    }
                 }
-                TypeInfo::Any => {
-                    // TODO: handle builtin functions
-                }
-                TypeInfo::Tuple(elements) => {
-                    if expr.args.len() == 1 {
-                        self.handle_expr(&expr.args[0]);
-                        if let ExprKind::Integer(index) = expr.args[0].kind {
-                            return_type = elements[index as usize];
-                        } else {
-                            self.errors.push(SemanticError::UnexpectedExpr {
-                                span: expr.args[0].span.clone(),
-                                expect: "integer".to_string(),
-                                found: format!("{:?}", expr.args[0]),
-                            });
-                        }
+            }
+            TypeInfo::Any => {
+                // TODO: handle builtin functions
+            }
+            TypeInfo::Tuple(elements) => {
+                if expr.args.len() == 1 {
+                    self.handle_expr(&expr.args[0]);
+                    if let ExprKind::Integer(index) = expr.args[0].kind {
+                        return_type = elements[index as usize];
                     } else {
-                        self.errors.push(SemanticError::ArgsCountMismatch {
-                            span: outer.span.clone(),
+                        self.errors.push(SemanticError::UnexpectedExpr {
+                            span: expr.args[0].span.clone(),
+                            expect: "integer".to_string(),
+                            found: format!("{:?}", expr.args[0]),
                         });
                     }
+                } else {
+                    self.errors.push(SemanticError::ArgsCountMismatch {
+                        span: outer.span.clone(),
+                    });
                 }
-                _ => {
-                    panic!("not callable")
-                }
+            }
+            _ => {
+                panic!("not callable")
             }
         }
 

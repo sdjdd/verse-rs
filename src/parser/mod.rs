@@ -204,7 +204,7 @@ impl<'src> Parser<'src> {
 
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
         self.expect(Token::Id)?;
-        let start = self.span();
+        let start = self.span().start;
         match self.slice() {
             "tuple" => {
                 self.expect(Token::LParen)?;
@@ -215,14 +215,18 @@ impl<'src> Parser<'src> {
                 self.expect(Token::RParen)?;
                 Ok(TypeExpr {
                     kind: TypeExprKind::Tuple(args),
-                    span: start.start..self.span().end,
+                    span: start..self.span().end,
                 })
             }
+            "type" => Ok(TypeExpr {
+                kind: TypeExprKind::Type,
+                span: self.span().clone(),
+            }),
             _ => {
                 let symbol = self.symbol_table.intern(self.slice());
                 Ok(TypeExpr {
                     kind: TypeExprKind::Named(symbol),
-                    span: start.start..self.span().end,
+                    span: start..self.span().end,
                 })
             }
         }

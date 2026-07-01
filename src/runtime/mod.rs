@@ -19,6 +19,9 @@ pub enum FunctionKind {
     Verse(FunctionId),
 }
 
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub struct TypeId(pub usize);
+
 #[derive(Clone, Debug)]
 pub enum Value {
     Void,
@@ -29,8 +32,10 @@ pub enum Value {
     Char32(char),
     String(String),
     Logic(bool),
-    Tuple(Vec<Value>),
+
+    Tuple { elements: Vec<Value> },
     Function { kind: FunctionKind },
+    Type(TypeId),
 }
 
 impl Value {
@@ -78,7 +83,9 @@ impl std::fmt::Display for Value {
             Value::Char(value) => write!(f, "{}", *value as char),
             Value::Char32(value) => write!(f, "{}", value),
             Value::String(value) => write!(f, "{}", value),
-            Value::Tuple(value) => {
+            Value::Tuple {
+                elements: value, ..
+            } => {
                 write!(f, "(")?;
                 for (i, v) in value.iter().enumerate() {
                     if i > 0 {

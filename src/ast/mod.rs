@@ -42,6 +42,7 @@ pub enum TypeExprKind {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
     },
+    Type,
 }
 
 #[derive(Debug, Clone)]

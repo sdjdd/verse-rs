@@ -4,6 +4,7 @@ use crate::{
     ast::*,
     core::{Symbol, SymbolTable},
     runtime::{CallContext, Failure, FunctionId, FunctionKind, Value, builtin_funcs},
+    semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
 
 #[derive(Default)]
@@ -19,7 +20,12 @@ pub struct Evaluator {
 }
 
 impl Evaluator {
-    pub fn new(mut symbol_table: SymbolTable, void_funcs: &[FunctionId]) -> Self {
+    pub fn new(
+        mut symbol_table: SymbolTable,
+        void_funcs: &[FunctionId],
+        builtin_symbols: &BuiltinSymbols,
+        builtin_types: &BuiltinTypes,
+    ) -> Self {
         let mut bindings = HashMap::new();
 
         bindings.insert(
@@ -28,6 +34,10 @@ impl Evaluator {
                 kind: FunctionKind::Native(builtin_funcs::print),
             },
         );
+
+        for (s, t) in builtin_types.pairs(builtin_symbols) {
+            bindings.insert(s, Value::Type(t));
+        }
 
         let root_scope = EvalScope {
             bindings,
@@ -38,7 +48,7 @@ impl Evaluator {
             scopes: vec![root_scope],
             symbol_table,
             functions: HashMap::new(),
-            void_funcs: void_funcs.iter().cloned().collect(),
+            void_funcs: void_funcs.iter().copied().collect(),
         }
     }
 
@@ -84,7 +94,7 @@ impl Evaluator {
             ExprKind::If(expr) => self.eval_if(expr),
             ExprKind::Template(expr) => self.eval_template(expr),
             ExprKind::CompareChain(expr) => self.eval_compare_chain(expr),
-            ExprKind::Tuple(expr) => self.eval_tuple(expr),
+            ExprKind::Tuple(e) => self.eval_tuple(e),
             ExprKind::Block(expr) => self.eval_block(expr),
             ExprKind::Func(e) => self.eval_func_expr(e, expr.id),
         }
@@ -122,7 +132,7 @@ impl Evaluator {
 
     fn eval_call(&mut self, expr: &CallExpr) -> Result<Value, Failure> {
         match self.eval(&expr.callee)? {
-            Value::Tuple(elements) => self.eval_call_tuple(&elements, &expr.args),
+            Value::Tuple { elements, .. } => self.eval_call_tuple(&elements, &expr.args),
             Value::Function { kind } => match kind {
                 FunctionKind::Native(func) => {
                     let args: Result<Vec<_>, _> =
@@ -333,7 +343,7 @@ impl Evaluator {
                 return Err(Failure());
             }
         }
-        Ok(Value::Tuple(values))
+        Ok(Value::Tuple { elements: values })
     }
 
     fn eval_block(&mut self, expr: &BlockExpr) -> Result<Value, Failure> {

@@ -12,6 +12,8 @@ pub struct BuiltinSymbols {
     pub(crate) s_logic: Symbol,
     pub(crate) s_string: Symbol,
     pub(crate) s_void: Symbol,
+    pub(crate) s_any: Symbol,
+
     // functions
     pub(crate) s_print: Symbol,
 }
@@ -25,6 +27,7 @@ impl BuiltinSymbols {
         let s_logic = symbol_tbl.intern("logic");
         let s_string = symbol_tbl.intern("string");
         let s_void = symbol_tbl.intern("void");
+        let s_any = symbol_tbl.intern("any");
 
         let s_print = symbol_tbl.intern("Print");
 
@@ -37,6 +40,7 @@ impl BuiltinSymbols {
             s_string,
             s_void,
             s_print,
+            s_any,
         }
     }
 }
@@ -73,5 +77,18 @@ impl BuiltinTypes {
             t_any,
             t_void,
         }
+    }
+
+    pub fn pairs(&self, bs: &BuiltinSymbols) -> Vec<(Symbol, TypeId)> {
+        vec![
+            (bs.s_int, self.t_int),
+            (bs.s_float, self.t_float),
+            (bs.s_logic, self.t_logic),
+            (bs.s_char, self.t_char),
+            (bs.s_char32, self.t_char32),
+            (bs.s_string, self.t_string),
+            (bs.s_any, self.t_any),
+            (bs.s_void, self.t_void),
+        ]
     }
 }
