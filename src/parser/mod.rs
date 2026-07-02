@@ -126,15 +126,7 @@ impl<'src> Parser<'src> {
         ExprId(id)
     }
 
-    fn make_expr(&mut self, start: usize, kind: impl Into<ExprKind>) -> Expression {
-        Expression {
-            id: self.generate_expr_id(),
-            span: start..self.span().end,
-            kind: kind.into(),
-        }
-    }
-
-    fn make_expr2(&mut self, span: Span, kind: impl Into<ExprKind>) -> Expression {
+    fn make_expr(&mut self, span: Span, kind: impl Into<ExprKind>) -> Expression {
         Expression {
             id: self.generate_expr_id(),
             span,
@@ -243,7 +235,6 @@ impl<'src> Parser<'src> {
 
     fn parse_decl_expr(&mut self) -> ParseResult<Expression> {
         let mut lhs = self.parse_compare_chain_expr()?;
-        let start = lhs.span.start;
 
         if let ExprKind::Id(id_expr) = &lhs.kind {
             if self.consume_if(Token::Colon)? {
@@ -256,7 +247,10 @@ impl<'src> Parser<'src> {
                 };
 
                 let rhs = self.parse_expression()?;
-                lhs = self.make_expr(start, DeclExpr::new(id_expr.symbol, typ, rhs));
+                lhs = self.make_expr(
+                    lhs.span.start..rhs.span.end,
+                    DeclExpr::new(id_expr.symbol, typ, rhs),
+                );
             }
         }
 
@@ -279,12 +273,12 @@ impl<'src> Parser<'src> {
         self.expect(Token::Eq)?;
         let expr = self.parse_expression()?;
 
-        Ok(self.make_expr(start, SetExpr::new(target, expr)))
+        Ok(self.make_expr(start..expr.span.end, SetExpr::new(target, expr)))
     }
 
     fn parse_var_decl_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.span().start;
         self.expect(Token::Var)?;
+        let start = self.span().start;
 
         self.expect(Token::Id)?;
         let symbol = self.symbol_table.intern(self.slice());
@@ -296,11 +290,10 @@ impl<'src> Parser<'src> {
         self.expect(Token::Eq)?;
         let expr = self.parse_expression()?;
 
-        Ok(self.make_expr(start, VarDeclExpr::new(name, typ, expr)))
+        Ok(self.make_expr(start..expr.span.end, VarDeclExpr::new(name, typ, expr)))
     }
 
     fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.span().start;
         let head = self.parse_additive_expr()?;
         let mut rest = Vec::new();
         loop {
@@ -320,12 +313,15 @@ impl<'src> Parser<'src> {
         Ok(if rest.is_empty() {
             head
         } else {
-            self.make_expr(start, CompareChainExpr::new(head, rest))
+            let last_expr = &rest.last().unwrap().1;
+            self.make_expr(
+                head.span.start..last_expr.span.end,
+                CompareChainExpr::new(head, rest),
+            )
         })
     }
 
     fn parse_additive_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.span().start;
         let mut lhs = self.parse_multiplicative_expr()?;
         loop {
             let op = match self.peek()? {
@@ -335,13 +331,12 @@ impl<'src> Parser<'src> {
             };
             self.next().unwrap();
             let rhs = self.parse_multiplicative_expr()?;
-            lhs = self.make_expr(start, BinaryExpr::new(lhs, op, rhs));
+            lhs = self.make_expr(lhs.span.start..rhs.span.end, BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
     }
 
     fn parse_multiplicative_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.span().start;
         let mut lhs = self.parse_call_expr()?;
         loop {
             let op = match self.peek()? {
@@ -351,14 +346,14 @@ impl<'src> Parser<'src> {
             };
             self.next().unwrap();
             let rhs = self.parse_call_expr()?;
-            lhs = self.make_expr(start, BinaryExpr::new(lhs, op, rhs));
+            lhs = self.make_expr(lhs.span.start..rhs.span.end, BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
     }
 
     fn parse_if_expr(&mut self) -> ParseResult<Expression> {
-        let start = self.span().start;
         self.expect(Token::If)?;
+        let start = self.span().start;
 
         let (test, consequent, alternate) = match self.next()? {
             Token::LParen => {
@@ -426,7 +421,12 @@ impl<'src> Parser<'src> {
             }
         };
 
-        Ok(self.make_expr(start, IfExpr::new(test, consequent, alternate)))
+        let end = alternate
+            .as_ref()
+            .map(|e| e.span.end)
+            .unwrap_or(consequent.span.end);
+
+        Ok(self.make_expr(start..end, IfExpr::new(test, consequent, alternate)))
     }
 
     fn parse_block_expr(&mut self) -> ParseResult<Expression> {
@@ -444,7 +444,7 @@ impl<'src> Parser<'src> {
             end = self.span().end;
             self.skip_newlines()?;
         }
-        Ok(self.make_expr2(start..end, BlockExpr::new(body)))
+        Ok(self.make_expr(start..end, BlockExpr::new(body)))
     }
 
     fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
@@ -466,7 +466,11 @@ impl<'src> Parser<'src> {
         {
             self.pop_state();
             let type_expr = self.parse_type_expr()?;
-            return Ok(self.make_expr2(callee.span, type_expr));
+            return Ok(Expression {
+                id: type_expr.id,
+                span: type_expr.span.clone(),
+                kind: ExprKind::Type(type_expr),
+            });
         } else {
             self.drop_state();
         }
@@ -477,7 +481,10 @@ impl<'src> Parser<'src> {
                 args.push(self.parse_expression()?);
                 self.consume_if(Token::Comma)?;
             }
-            callee = self.make_expr(callee.span.start, CallExpr::new(callee, args));
+            callee = self.make_expr(
+                callee.span.start..self.span().end,
+                CallExpr::new(callee, args),
+            );
         }
 
         Ok(callee)
@@ -520,14 +527,17 @@ impl<'src> Parser<'src> {
             } else {
                 self.parse_expression()?
             };
-            Ok(self.make_expr(start, FunctionExpr::new(name, params, return_type, body)))
+            Ok(self.make_expr(
+                start..body.span.end,
+                FunctionExpr::new(name, params, return_type, body),
+            ))
         })
     }
 
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::Id)?;
         let symbol = self.symbol_table.intern(self.slice());
-        Ok(self.make_expr(self.span().start, IdExpr::new(symbol)))
+        Ok(self.make_expr(self.span(), IdExpr::new(symbol)))
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
@@ -546,8 +556,7 @@ impl<'src> Parser<'src> {
                 return Err(self.unexpected_error());
             }
         };
-        let start = self.span().start;
-        Ok(self.make_expr(start, expr))
+        Ok(self.make_expr(self.span(), expr))
     }
 
     fn parse_integer_literal(&mut self) -> ParseResult<ExprKind> {
@@ -604,8 +613,8 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_template_expression(&mut self) -> ParseResult<Expression> {
-        let start = self.span().start;
         self.expect(Token::TemplateHead)?;
+        let start = self.span().start;
         let mut elements = Vec::new();
         let src = self.slice();
         elements.push(TemplateElement::Raw(
@@ -629,7 +638,7 @@ impl<'src> Parser<'src> {
         elements.push(TemplateElement::Raw(
             self.escape_string_literal(&src[1..src.len() - 1]),
         ));
-        Ok(self.make_expr(start, TemplateExpression::new(elements)))
+        Ok(self.make_expr(start..self.span().end, TemplateExpression::new(elements)))
     }
 
     fn escape_string_literal(&self, src: &str) -> String {
@@ -660,7 +669,7 @@ impl<'src> Parser<'src> {
                     elements.push(self.parse_expression()?);
                     self.consume_if(Token::Comma)?;
                 }
-                Ok(self.make_expr(start, TupleExpr::new(elements)))
+                Ok(self.make_expr(start..self.span().end, TupleExpr::new(elements)))
             }
             Token::RParen => Ok(expr),
             _ => Err(self.unexpected_error()),

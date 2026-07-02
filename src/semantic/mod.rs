@@ -220,7 +220,7 @@ impl SemanticAnalyzer {
             ExprKind::Func(e) => self.handle_func_expr(expr, e),
             ExprKind::Call(e) => self.handle_call_expr(expr, e),
             ExprKind::Binary(e) => self.handle_binary_expr(expr, e),
-            ExprKind::Type(e) => self.handle_type_expr(Some(expr), e),
+            ExprKind::Type(e) => self.handle_type_expr(e),
         }
     }
 
@@ -231,7 +231,7 @@ impl SemanticAnalyzer {
         let binding_type = if let Some(typ) = &expr.typ
             && !matches!(typ.kind, TypeExprKind::Type)
         {
-            self.handle_type_expr(None, typ);
+            self.handle_type_expr(typ);
             let decl_type = self.get_expr_type(typ.id);
             if !self.is_assignable_to(value_type, decl_type) {
                 self.emit_type_mismatch_error(expr.value.span.clone(), decl_type, value_type);
@@ -257,7 +257,7 @@ impl SemanticAnalyzer {
     fn handle_var_decl_expr(&mut self, outer: &Expression, expr: &VarDeclExpr) {
         self.handle_expr(&expr.expr);
 
-        self.handle_type_expr(None, &expr.typ);
+        self.handle_type_expr(&expr.typ);
         let decl_type = self.get_expr_type(expr.typ.id);
         let value_type = self.get_expr_type(expr.expr.id);
 
@@ -389,12 +389,12 @@ impl SemanticAnalyzer {
     fn handle_func_expr(&mut self, outer: &Expression, expr: &FunctionExpr) {
         let mut param_types = vec![];
 
-        self.handle_type_expr(None, &expr.return_type);
+        self.handle_type_expr(&expr.return_type);
         let return_type = self.get_expr_type(expr.return_type.id);
 
         self.push_scope();
         for param in &expr.params {
-            self.handle_type_expr(None, &param.typ);
+            self.handle_type_expr(&param.typ);
             let param_type = self.get_expr_type(param.typ.id);
             param_types.push(param_type);
             self.declare(
