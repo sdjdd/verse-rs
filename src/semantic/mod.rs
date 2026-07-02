@@ -12,6 +12,7 @@ use crate::{
 pub mod builtins;
 
 mod binary_expr;
+mod type_expr;
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum TypeInfo {
@@ -67,7 +68,7 @@ pub struct Scope {
 }
 
 pub struct SemanticAnalyzer {
-    expr_type: HashMap<ExprId, TypeId>,
+    pub expr_type: HashMap<ExprId, TypeId>,
     scopes: Vec<Scope>,
     pub builtin_symbols: BuiltinSymbols,
     pub builtin_types: BuiltinTypes,
@@ -183,42 +184,8 @@ impl SemanticAnalyzer {
         });
     }
 
-    pub fn intern_type_expr(&mut self, type_expr: &TypeExpr) -> TypeId {
-        match &type_expr.kind {
-            TypeExprKind::Named(symbol) => {
-                self.lookup_type_by_symbol(*symbol).unwrap_or_else(|| {
-                    self.errors.push(SemanticError::TypeNotFound {
-                        span: type_expr.span.clone(),
-                        symbol: *symbol,
-                    });
-                    self.builtin_types.t_any
-                })
-            }
-            TypeExprKind::Tuple(args) => {
-                let mut arg_ids = vec![];
-                for arg in args {
-                    let arg_id = self.intern_type_expr(arg);
-                    arg_ids.push(arg_id);
-                }
-                self.types.intern(TypeInfo::Tuple(arg_ids))
-            }
-            TypeExprKind::Function { params, ret } => {
-                let param_types: Vec<_> = params.iter().map(|p| self.intern_type_expr(p)).collect();
-                let return_type = self.intern_type_expr(ret);
-                self.types.intern(TypeInfo::Function {
-                    params: param_types,
-                    ret: return_type,
-                })
-            }
-            TypeExprKind::Type => self.builtin_types.t_any,
-        }
-    }
-
     fn get_expr_type(&self, expr_id: ExprId) -> TypeId {
-        self.expr_type
-            .get(&expr_id)
-            .cloned()
-            .unwrap_or(self.builtin_types.t_any)
+        self.expr_type.get(&expr_id).cloned().unwrap()
     }
 
     pub fn handle_expr(&mut self, expr: &Expression) {
@@ -253,6 +220,7 @@ impl SemanticAnalyzer {
             ExprKind::Func(e) => self.handle_func_expr(expr, e),
             ExprKind::Call(e) => self.handle_call_expr(expr, e),
             ExprKind::Binary(e) => self.handle_binary_expr(expr, e),
+            ExprKind::Type(e) => self.handle_type_expr(Some(expr), e),
         }
     }
 
@@ -263,7 +231,8 @@ impl SemanticAnalyzer {
         let binding_type = if let Some(typ) = &expr.typ
             && !matches!(typ.kind, TypeExprKind::Type)
         {
-            let decl_type = self.intern_type_expr(typ);
+            self.handle_type_expr(None, typ);
+            let decl_type = self.get_expr_type(typ.id);
             if !self.is_assignable_to(value_type, decl_type) {
                 self.emit_type_mismatch_error(expr.value.span.clone(), decl_type, value_type);
             }
@@ -288,7 +257,8 @@ impl SemanticAnalyzer {
     fn handle_var_decl_expr(&mut self, outer: &Expression, expr: &VarDeclExpr) {
         self.handle_expr(&expr.expr);
 
-        let decl_type = self.intern_type_expr(&expr.typ);
+        self.handle_type_expr(None, &expr.typ);
+        let decl_type = self.get_expr_type(expr.typ.id);
         let value_type = self.get_expr_type(expr.expr.id);
 
         if !self.is_assignable_to(value_type, decl_type) {
@@ -418,11 +388,14 @@ impl SemanticAnalyzer {
 
     fn handle_func_expr(&mut self, outer: &Expression, expr: &FunctionExpr) {
         let mut param_types = vec![];
-        let return_type = self.intern_type_expr(&expr.return_type);
+
+        self.handle_type_expr(None, &expr.return_type);
+        let return_type = self.get_expr_type(expr.return_type.id);
 
         self.push_scope();
         for param in &expr.params {
-            let param_type = self.intern_type_expr(&param.typ);
+            self.handle_type_expr(None, &param.typ);
+            let param_type = self.get_expr_type(param.typ.id);
             param_types.push(param_type);
             self.declare(
                 param.name,

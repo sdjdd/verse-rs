@@ -3,9 +3,11 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     ast::*,
     core::{Symbol, SymbolTable},
-    runtime::{CallContext, Failure, FunctionId, FunctionKind, Value, builtin_funcs},
+    runtime::{CallContext, Failure, FunctionId, FunctionKind, TypeId, Value, builtin_funcs},
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
+
+mod type_expr;
 
 #[derive(Default)]
 struct EvalScope {
@@ -17,12 +19,14 @@ pub struct Evaluator {
     scopes: Vec<EvalScope>,
     functions: HashMap<FunctionId, FunctionExpr>,
     void_funcs: HashSet<FunctionId>,
+    expr_types: HashMap<ExprId, TypeId>,
 }
 
 impl Evaluator {
     pub fn new(
         mut symbol_table: SymbolTable,
         void_funcs: &[FunctionId],
+        expr_types: &HashMap<ExprId, TypeId>,
         builtin_symbols: &BuiltinSymbols,
         builtin_types: &BuiltinTypes,
     ) -> Self {
@@ -49,6 +53,7 @@ impl Evaluator {
             symbol_table,
             functions: HashMap::new(),
             void_funcs: void_funcs.iter().copied().collect(),
+            expr_types: expr_types.clone(),
         }
     }
 
@@ -97,6 +102,7 @@ impl Evaluator {
             ExprKind::Tuple(e) => self.eval_tuple(e),
             ExprKind::Block(expr) => self.eval_block(expr),
             ExprKind::Func(e) => self.eval_func_expr(e, expr.id),
+            ExprKind::Type(e) => self.eval_type_expr(e),
         }
     }
 

@@ -4,6 +4,7 @@ use crate::{
     ast::*,
     core::SymbolTable,
     lexer::{IndentAwareLexer, LexerError, Span, Token},
+    semantic::builtins::BuiltinSymbols,
 };
 
 #[derive(Debug)]
@@ -41,6 +42,7 @@ pub struct Parser<'src> {
     next_expr_id: usize,
     state: ParserState<'src>,
     states: Vec<ParserState<'src>>,
+    builtin_symbols: BuiltinSymbols,
 }
 
 impl<'src> Parser<'src> {
@@ -51,12 +53,16 @@ impl<'src> Parser<'src> {
             current_token_span: Default::default(),
         };
 
+        let mut st = SymbolTable::new();
+        let builtin_symbols = BuiltinSymbols::install(&mut st);
+
         Self {
             source,
-            symbol_table: SymbolTable::new(),
+            symbol_table: st,
             next_expr_id: 0,
             state,
             states: vec![],
+            builtin_symbols,
         }
     }
 
@@ -214,17 +220,20 @@ impl<'src> Parser<'src> {
                 }
                 self.expect(Token::RParen)?;
                 Ok(TypeExpr {
+                    id: self.generate_expr_id(),
                     kind: TypeExprKind::Tuple(args),
                     span: start..self.span().end,
                 })
             }
             "type" => Ok(TypeExpr {
+                id: self.generate_expr_id(),
                 kind: TypeExprKind::Type,
                 span: self.span().clone(),
             }),
             _ => {
                 let symbol = self.symbol_table.intern(self.slice());
                 Ok(TypeExpr {
+                    id: self.generate_expr_id(),
                     kind: TypeExprKind::Named(symbol),
                     span: start..self.span().end,
                 })
@@ -449,7 +458,18 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_call_expr(&mut self) -> ParseResult<Expression> {
+        self.push_state();
         let mut callee = self.parse_primary_expr()?;
+
+        if let ExprKind::Id(id_expr) = &callee.kind
+            && id_expr.symbol == self.builtin_symbols.s_tuple
+        {
+            self.pop_state();
+            let type_expr = self.parse_type_expr()?;
+            return Ok(self.make_expr2(callee.span, type_expr));
+        } else {
+            self.drop_state();
+        }
 
         while self.consume_if(Token::LParen)? {
             let mut args = vec![];

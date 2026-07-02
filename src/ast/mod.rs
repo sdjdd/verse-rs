@@ -32,6 +32,7 @@ pub enum ExprKind {
     Tuple(TupleExpr),
     Block(BlockExpr),
     Func(FunctionExpr),
+    Type(TypeExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -47,8 +48,9 @@ pub enum TypeExprKind {
 
 #[derive(Debug, Clone)]
 pub struct TypeExpr {
-    pub kind: TypeExprKind,
+    pub id: ExprId,
     pub span: Span,
+    pub kind: TypeExprKind,
 }
 
 #[derive(Debug, Clone, Constructor)]

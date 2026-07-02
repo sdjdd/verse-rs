@@ -43,6 +43,7 @@ fn main() {
         let mut ctx = Evaluator::new(
             parser.get_symbol_table().clone(),
             semantic_ctx.get_void_functions(),
+            &semantic_ctx.expr_type,
             &semantic_ctx.builtin_symbols,
             &semantic_ctx.builtin_types,
         );

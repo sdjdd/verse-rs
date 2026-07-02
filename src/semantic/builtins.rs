@@ -13,6 +13,7 @@ pub struct BuiltinSymbols {
     pub(crate) s_string: Symbol,
     pub(crate) s_void: Symbol,
     pub(crate) s_any: Symbol,
+    pub(crate) s_tuple: Symbol,
 
     // functions
     pub(crate) s_print: Symbol,
@@ -28,6 +29,7 @@ impl BuiltinSymbols {
         let s_string = symbol_tbl.intern("string");
         let s_void = symbol_tbl.intern("void");
         let s_any = symbol_tbl.intern("any");
+        let s_tuple = symbol_tbl.intern("tuple");
 
         let s_print = symbol_tbl.intern("Print");
 
@@ -39,8 +41,10 @@ impl BuiltinSymbols {
             s_logic,
             s_string,
             s_void,
-            s_print,
             s_any,
+            s_tuple,
+
+            s_print,
         }
     }
 }
