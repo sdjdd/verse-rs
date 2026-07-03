@@ -5,12 +5,8 @@ use crate::{
     lexer::Span,
 };
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct ExprId(pub(crate) usize);
-
 #[derive(Debug, Clone)]
 pub struct Expression {
-    pub id: ExprId,
     pub kind: ExprKind,
     pub span: Span,
 }
@@ -51,7 +47,6 @@ pub enum TypeExprKind {
 
 #[derive(Debug, Clone)]
 pub struct TypeExpr {
-    pub id: ExprId,
     pub span: Span,
     pub kind: TypeExprKind,
 }
@@ -230,7 +225,6 @@ impl CompareChainExpr {
 
 #[derive(Debug, Clone)]
 pub struct TupleExpr {
-    pub id: ExprId,
     pub elements: Vec<Expression>,
 }
 

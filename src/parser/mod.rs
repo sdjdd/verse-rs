@@ -35,7 +35,6 @@ pub struct Parser<'src> {
     pos: usize,
     current_token_span: Span,
     symbol_table: SymbolTable,
-    next_expr_id: usize,
     builtin_symbols: BuiltinSymbols,
 
     pub const_table: ConstTable,
@@ -52,7 +51,6 @@ impl<'src> Parser<'src> {
             pos: 0,
             current_token_span: 0..0,
             symbol_table: st,
-            next_expr_id: 0,
             builtin_symbols,
             const_table: ConstTable::new(),
         }
@@ -89,15 +87,8 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn generate_expr_id(&mut self) -> ExprId {
-        let id = self.next_expr_id;
-        self.next_expr_id += 1;
-        ExprId(id)
-    }
-
     fn make_expr(&mut self, span: Span, kind: impl Into<ExprKind>) -> Expression {
         Expression {
-            id: self.generate_expr_id(),
             span,
             kind: kind.into(),
         }
@@ -172,20 +163,17 @@ impl<'src> Parser<'src> {
                 }
                 self.expect(Token::RParen)?;
                 Ok(TypeExpr {
-                    id: self.generate_expr_id(),
                     kind: TypeExprKind::Tuple(args),
                     span: start..self.span().end,
                 })
             }
             "type" => Ok(TypeExpr {
-                id: self.generate_expr_id(),
                 kind: TypeExprKind::Type,
                 span: self.span().clone(),
             }),
             _ => {
                 let symbol = self.symbol_table.intern(self.slice());
                 Ok(TypeExpr {
-                    id: self.generate_expr_id(),
                     kind: TypeExprKind::Named(symbol),
                     span: start..self.span().end,
                 })
@@ -427,7 +415,6 @@ impl<'src> Parser<'src> {
             self.pos = pos;
             let type_expr = self.parse_type_expr()?;
             return Ok(Expression {
-                id: type_expr.id,
                 span: type_expr.span.clone(),
                 kind: ExprKind::Type(type_expr),
             });
@@ -628,11 +615,9 @@ impl<'src> Parser<'src> {
                     elements.push(self.parse_expression()?);
                     self.consume_if(Token::Comma);
                 }
-                let id = self.generate_expr_id();
                 Ok(Expression {
-                    id,
                     span: start..self.span().end,
-                    kind: ExprKind::Tuple(TupleExpr { id, elements }),
+                    kind: ExprKind::Tuple(TupleExpr { elements }),
                 })
             }
             Token::RParen => Ok(expr),
