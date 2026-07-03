@@ -31,6 +31,7 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: SymbolTa
             expect: expected,
             found,
         } => (span, format!("expect {}, found {}", expected, found)),
+        SemanticError::NotCallable { callee } => (&callee.span, format!("is not callable")),
     };
 
     let start_pos = get_source_position(src, span.start).unwrap();

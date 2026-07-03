@@ -669,7 +669,12 @@ impl<'src> Parser<'src> {
                     elements.push(self.parse_expression()?);
                     self.consume_if(Token::Comma)?;
                 }
-                Ok(self.make_expr(start..self.span().end, TupleExpr::new(elements)))
+                let id = self.generate_expr_id();
+                Ok(Expression {
+                    id,
+                    span: start..self.span().end,
+                    kind: ExprKind::Tuple(TupleExpr { id, elements }),
+                })
             }
             Token::RParen => Ok(expr),
             _ => Err(self.unexpected_error()),

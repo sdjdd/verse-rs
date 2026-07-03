@@ -33,7 +33,7 @@ pub enum Value {
     String(String),
     Logic(bool),
 
-    Tuple { elements: Vec<Value> },
+    Tuple { ty: TypeId, elements: Vec<Value> },
     Function { kind: FunctionKind },
     Type(TypeId),
 }
@@ -61,15 +61,15 @@ impl Value {
             _ => None,
         }
     }
-}
 
-fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        let t = b;
-        b = a % b;
-        a = t;
+    pub fn is_zero(&self) -> bool {
+        match self {
+            Value::Integer(v) => *v == 0,
+            Value::Float(v) => *v == 0.0,
+            Value::Rational(v, ..) => *v == 0,
+            _ => unimplemented!(),
+        }
     }
-    a
 }
 
 impl std::fmt::Display for Value {
@@ -82,7 +82,7 @@ impl std::fmt::Display for Value {
             Value::Float(value) => write!(f, "{}", value),
             Value::Char(value) => write!(f, "{}", *value as char),
             Value::Char32(value) => write!(f, "{}", value),
-            Value::String(value) => write!(f, "{}", value),
+            Value::String(value) => write!(f, r#""{}""#, value),
             Value::Tuple {
                 elements: value, ..
             } => {
@@ -124,4 +124,64 @@ impl PartialOrd for Value {
             _ => unimplemented!(),
         }
     }
+}
+
+impl std::ops::Add for Value {
+    type Output = Value;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Value::Integer(a + b),
+            (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
+            (Value::Rational(a1, a2), Value::Rational(b1, b2)) => {
+                Value::Rational(a1 * b2 + b1 * a2, a2 * b2)
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl std::ops::Sub for Value {
+    type Output = Value;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Value::Integer(a - b),
+            (Value::Float(a), Value::Float(b)) => Value::Float(a - b),
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl std::ops::Mul for Value {
+    type Output = Value;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Value::Integer(a * b),
+            (Value::Float(a), Value::Float(b)) => Value::Float(a * b),
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl std::ops::Div for Value {
+    type Output = Value;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Value::Integer(a / b),
+            (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
+            _ => unimplemented!(),
+        }
+    }
+}
+
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
 }

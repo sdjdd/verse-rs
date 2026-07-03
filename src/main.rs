@@ -33,25 +33,19 @@ fn main() {
 
     let mut semantic_ctx = SemanticAnalyzer::new(parser.get_symbol_table_mut());
 
-    for expr in &program.expressions {
-        semantic_ctx.handle_expr(expr)
-    }
+    let entry = semantic_ctx.analyze(&program.expressions);
     for err in &semantic_ctx.errors {
         print_semantic_error(&err, &source, parser.get_symbol_table().clone());
     }
     if semantic_ctx.errors.is_empty() {
         let mut ctx = Evaluator::new(
             parser.get_symbol_table().clone(),
-            semantic_ctx.get_void_functions(),
-            &semantic_ctx.expr_type,
-            &semantic_ctx.builtin_symbols,
-            &semantic_ctx.builtin_types,
+            semantic_ctx.builtin_symbols,
+            semantic_ctx.builtin_types,
+            semantic_ctx.irs.clone(),
         );
         let mut value = Ok(Value::Void);
-        program
-            .expressions
-            .iter()
-            .for_each(|expr| value = ctx.eval(expr));
+        entry.into_iter().for_each(|ir| value = ctx.eval(ir));
         println!("{:?}", value);
     }
 }

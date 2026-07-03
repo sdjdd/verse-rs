@@ -1,13 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
-    ast::*,
+    ast::{BinaryOperator, CompareOp},
     core::{Symbol, SymbolTable},
+    ir,
     runtime::{CallContext, Failure, FunctionId, FunctionKind, TypeId, Value, builtin_funcs},
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
-
-mod type_expr;
 
 #[derive(Default)]
 struct EvalScope {
@@ -15,20 +14,18 @@ struct EvalScope {
 }
 
 pub struct Evaluator {
-    symbol_table: SymbolTable,
     scopes: Vec<EvalScope>,
-    functions: HashMap<FunctionId, FunctionExpr>,
-    void_funcs: HashSet<FunctionId>,
-    expr_types: HashMap<ExprId, TypeId>,
+    functions: HashMap<FunctionId, ir::FunctionExpr>,
+    builtin_types: BuiltinTypes,
+    irs: Vec<ir::Ir>,
 }
 
 impl Evaluator {
     pub fn new(
         mut symbol_table: SymbolTable,
-        void_funcs: &[FunctionId],
-        expr_types: &HashMap<ExprId, TypeId>,
-        builtin_symbols: &BuiltinSymbols,
-        builtin_types: &BuiltinTypes,
+        builtin_symbols: BuiltinSymbols,
+        builtin_types: BuiltinTypes,
+        irs: Vec<ir::Ir>,
     ) -> Self {
         let mut bindings = HashMap::new();
 
@@ -39,7 +36,7 @@ impl Evaluator {
             },
         );
 
-        for (s, t) in builtin_types.pairs(builtin_symbols) {
+        for (s, t) in builtin_types.pairs(&builtin_symbols) {
             bindings.insert(s, Value::Type(t));
         }
 
@@ -50,10 +47,9 @@ impl Evaluator {
 
         Self {
             scopes: vec![root_scope],
-            symbol_table,
             functions: HashMap::new(),
-            void_funcs: void_funcs.iter().copied().collect(),
-            expr_types: expr_types.clone(),
+            builtin_types: builtin_types,
+            irs,
         }
     }
 
@@ -82,67 +78,67 @@ impl Evaluator {
         None
     }
 
-    pub fn eval(&mut self, expr: &Expression) -> Result<Value, Failure> {
-        match &expr.kind {
-            ExprKind::Call(expr) => self.eval_call(expr),
-            ExprKind::Integer(value) => Ok(Value::Integer(*value)),
+    pub fn eval(&mut self, expr: ir::ExprId) -> Result<Value, Failure> {
+        let hir_expr = &self.irs[expr.0].clone();
+
+        use ir::ExprKind;
+        match &hir_expr.kind {
+            ExprKind::Int(value) => Ok(Value::Integer(*value)),
             ExprKind::Float(value) => Ok(Value::Float(*value)),
             ExprKind::Char(value) => Ok(Value::Char(*value)),
             ExprKind::Char32(value) => Ok(Value::Char32(*value)),
             ExprKind::String(value) => Ok(Value::String(value.clone())),
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
+            ExprKind::Type(e) => Ok(Value::Type(*e)),
             ExprKind::Decl(expr) => self.eval_declaration(expr),
-            ExprKind::VarDecl(expr) => self.eval_var_decl(expr),
             ExprKind::Set(expr) => self.eval_set(expr),
-            ExprKind::Id(expr) => self.eval_identifier(expr),
+            ExprKind::Id(s) => self.eval_identifier(*s),
             ExprKind::Binary(expr) => self.eval_binary(expr),
             ExprKind::If(expr) => self.eval_if(expr),
             ExprKind::Template(expr) => self.eval_template(expr),
             ExprKind::CompareChain(expr) => self.eval_compare_chain(expr),
-            ExprKind::Tuple(e) => self.eval_tuple(e),
+            ExprKind::Tuple(e) => self.eval_tuple(e, hir_expr.ty),
             ExprKind::Block(expr) => self.eval_block(expr),
-            ExprKind::Func(e) => self.eval_func_expr(e, expr.id),
-            ExprKind::Type(e) => self.eval_type_expr(e),
+            ExprKind::Func(e) => self.eval_func_expr(e, hir_expr.id),
+            ExprKind::Call(expr) => self.eval_call(expr),
+            ExprKind::Cast { ty, value } => self.test_value_type(*value, *ty),
+            ExprKind::NoOp => Ok(Value::Void),
+            ExprKind::GetTupleElem { tuple, index } => {
+                if let Value::Tuple { elements, .. } = self.eval(*tuple)? {
+                    Ok(elements[*index].clone())
+                } else {
+                    panic!("GetTupleElem on a non-tuple value")
+                }
+            }
         }
     }
 
-    fn eval_declaration(&mut self, expr: &DeclExpr) -> Result<Value, Failure> {
-        let value = self.eval(&expr.value)?;
+    fn eval_declaration(&mut self, expr: &ir::DeclExpr) -> Result<Value, Failure> {
+        let value = self.eval(expr.value)?;
+        self.declare(expr.name, value.clone());
+        Ok(value)
+    }
+
+    fn eval_set(&mut self, expr: &ir::SetExpr) -> Result<Value, Failure> {
+        let value = self.eval(expr.value)?;
         self.declare(expr.target, value.clone());
         Ok(value)
     }
 
-    fn eval_set(&mut self, expr: &SetExpr) -> Result<Value, Failure> {
-        let value = self.eval(&expr.expr)?;
-        match &expr.target.kind {
-            LValueKind::Id(id) => {
-                self.declare(id.symbol, value.clone());
-            }
-        }
-        Ok(value)
-    }
-
-    fn eval_var_decl(&mut self, expr: &VarDeclExpr) -> Result<Value, Failure> {
-        let value = self.eval(&expr.expr)?;
-        self.declare(expr.name.symbol, value.clone());
-        Ok(value)
-    }
-
-    fn eval_identifier(&mut self, expr: &IdExpr) -> Result<Value, Failure> {
-        if let Some(value) = self.resolve_symbol(expr.symbol) {
+    fn eval_identifier(&mut self, symbol: Symbol) -> Result<Value, Failure> {
+        if let Some(value) = self.resolve_symbol(symbol) {
             Ok(value.clone())
         } else {
-            panic!("{} is not defined", self.symbol_table.resolve(expr.symbol))
+            panic!("identifier not defined, symbol: {:?}", symbol)
         }
     }
 
-    fn eval_call(&mut self, expr: &CallExpr) -> Result<Value, Failure> {
-        match self.eval(&expr.callee)? {
-            Value::Tuple { elements, .. } => self.eval_call_tuple(&elements, &expr.args),
+    fn eval_call(&mut self, expr: &ir::CallExpr) -> Result<Value, Failure> {
+        match self.eval(expr.callee)? {
             Value::Function { kind } => match kind {
                 FunctionKind::Native(func) => {
                     let args: Result<Vec<_>, _> =
-                        expr.args.iter().map(|arg| self.eval(arg)).collect();
+                        expr.args.iter().map(|arg| self.eval(*arg)).collect();
                     args.and_then(|args| {
                         let mut ctx = CallContext {
                             args: &args,
@@ -155,150 +151,96 @@ impl Evaluator {
                     })
                 }
                 FunctionKind::Verse(func_id) => {
+                    let func_expr = &self.functions[&func_id].clone();
                     self.push_scope();
-
-                    let val = {
-                        let func_expr = self.functions[&func_id].clone();
-                        let args: Result<Vec<_>, _> =
-                            expr.args.iter().map(|arg| self.eval(arg)).collect();
-
-                        args.map(|args| {
-                            for (i, param) in func_expr.params.iter().enumerate() {
-                                self.declare(param.name, args[i].clone());
-                            }
+                    let val = (|| -> Result<Value, Failure> {
+                        for (param, arg) in func_expr.params.iter().zip(expr.args.iter()) {
+                            let arg = self.eval(*arg)?;
+                            self.declare(*param, arg);
+                        }
+                        let ret_val = self.eval(func_expr.body)?;
+                        Ok(if func_expr.return_void {
+                            Value::Void
+                        } else {
+                            ret_val
                         })
-                        .and_then(|_| {
-                            self.eval(&func_expr.body).map(|ret_val| {
-                                if self.void_funcs.contains(&func_id) {
-                                    Value::Void
-                                } else {
-                                    ret_val
-                                }
-                            })
-                        })
-                    };
-
+                    })();
                     self.pop_scope();
-
                     val
                 }
             },
-            _ => unimplemented!(),
+            _ => panic!("callee is not callable"),
         }
     }
 
-    fn eval_call_tuple(
-        &mut self,
-        elements: &[Value],
-        arguments: &[Expression],
-    ) -> Result<Value, Failure> {
-        let arg = self.eval(&arguments[0])?;
-
-        match arg {
-            Value::Integer(idx) => Ok(elements[idx as usize].clone()),
-            _ => unimplemented!(),
-        }
+    fn test_value_type(&mut self, value: ir::ExprId, type_id: TypeId) -> Result<Value, Failure> {
+        let value = self.eval(value)?;
+        let ok = match &value {
+            Value::Integer(_) => type_id == self.builtin_types.t_int,
+            Value::Tuple { ty, .. } => *ty == type_id,
+            _ => false,
+        };
+        if ok { Ok(value) } else { Err(Failure()) }
     }
 
-    fn eval_binary(&mut self, expr: &BinaryExpr) -> Result<Value, Failure> {
-        let left = self.eval(&expr.lhs)?;
-        let right = self.eval(&expr.rhs)?;
+    fn eval_binary(&mut self, expr: &ir::BinaryExpr) -> Result<Value, Failure> {
+        let left = self.eval(expr.lhs)?;
+        let right = self.eval(expr.rhs)?;
         match (left, right) {
             (left, right) => {
                 let value = match expr.op {
-                    BinaryOperator::Plus => match (&left, &right) {
-                        (Value::Integer(l), Value::Integer(r)) => Value::Integer(l + r),
-                        (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
-                        _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
-                            Value::rational(a.0 * b.1 + b.0 * a.1, a.1 * b.1)
+                    BinaryOperator::Plus => left + right,
+                    BinaryOperator::Sub => left - right,
+                    BinaryOperator::Mul => left * right,
+                    BinaryOperator::Div => {
+                        if right.is_zero() {
+                            return Err(Failure());
                         }
-                        _ => unimplemented!(),
-                    },
-                    BinaryOperator::Sub => match (&left, &right) {
-                        (Value::Integer(l), Value::Integer(r)) => Value::Integer(l - r),
-                        (Value::Float(l), Value::Float(r)) => Value::Float(l - r),
-                        _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
-                            Value::rational(a.0 * b.1 - b.0 * a.1, a.1 * b.1)
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinaryOperator::Mul => match (&left, &right) {
-                        (Value::Integer(l), Value::Integer(r)) => Value::Integer(l * r),
-                        (Value::Float(l), Value::Float(r)) => Value::Float(l * r),
-                        _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
-                            Value::rational(a.0 * b.0, a.1 * b.1)
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinaryOperator::Div => match (&left, &right) {
-                        (Value::Integer(_), Value::Integer(0)) => return Err(Failure()),
-                        (Value::Integer(l), Value::Integer(r)) => Value::rational(*l, *r),
-                        (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
-                        _ if let (Some(a), Some(b)) = (left.to_rational(), right.to_rational()) => {
-                            if b.0 == 0 {
-                                return Err(Failure());
-                            }
-                            Value::rational(a.0 * b.1, a.1 * b.0)
-                        }
-                        _ => unimplemented!(),
-                    },
+                        left / right
+                    }
                 };
                 Ok(value)
             }
         }
     }
 
-    fn eval_if(&mut self, expr: &IfExpr) -> Result<Value, Failure> {
-        if let Ok(test) = self.eval(&expr.test) {
+    fn eval_if(&mut self, expr: &ir::IfExpr) -> Result<Value, Failure> {
+        if let Ok(test) = self.eval(expr.test) {
             if !matches!(test, Value::Logic(false)) {
-                self.eval(&expr.consequent)
-            } else if let Some(alternate) = &expr.alternate {
-                self.eval(alternate)
+                self.eval(expr.then)
+            } else if let Some(alternate) = &expr.alt {
+                self.eval(*alternate)
             } else {
                 Ok(Value::Void)
             }
         } else {
-            if let Some(alternate) = &expr.alternate {
-                self.eval(alternate)
+            if let Some(alternate) = &expr.alt {
+                // TODO: optional
+                self.eval(*alternate)
             } else {
                 Err(Failure())
             }
         }
     }
 
-    fn eval_template(&mut self, expr: &TemplateExpression) -> Result<Value, Failure> {
-        let mut strings = Vec::new();
-        strings.reserve(expr.elements.len());
-        for elem in expr.elements.iter() {
-            match elem {
-                TemplateElement::Raw(str) => strings.push(str.clone()),
-                TemplateElement::Expr(expr) => {
-                    if let Ok(value) = self.eval(expr) {
-                        strings.push(value.to_string());
-                    } else {
-                        return Err(Failure());
-                    }
-                }
-            }
-        }
-        Ok(Value::String(strings.concat()))
+    fn eval_template(&mut self, elements: &[ir::TemplateElement]) -> Result<Value, Failure> {
+        let elems: Result<Vec<_>, _> = elements
+            .iter()
+            .map(|el| match el {
+                ir::TemplateElement::String(str) => Ok(str.clone()),
+                ir::TemplateElement::Expr(expr) => self.eval(*expr).map(|v| v.to_string()),
+            })
+            .collect();
+
+        elems.map(|elems| Value::String(elems.concat()))
     }
 
-    fn eval_compare_chain(&mut self, expr: &CompareChainExpr) -> Result<Value, Failure> {
-        let leftmost = if let Ok(value) = self.eval(&expr.head) {
-            value
-        } else {
-            return Err(Failure());
-        };
-
+    fn eval_compare_chain(&mut self, expr: &ir::CompareChainExpr) -> Result<Value, Failure> {
+        let leftmost = self.eval(expr.head)?;
         let mut prev = leftmost.clone();
 
         for (op, expr) in &expr.rest {
-            let current = if let Ok(value) = self.eval(expr) {
-                value
-            } else {
-                return Err(Failure());
-            };
+            let current = self.eval(*expr)?;
 
             match op {
                 CompareOp::Eq => {
@@ -339,23 +281,18 @@ impl Evaluator {
         Ok(leftmost)
     }
 
-    fn eval_tuple(&mut self, expr: &TupleExpr) -> Result<Value, Failure> {
-        let mut values = Vec::new();
-        values.reserve(expr.elements.len());
-        for expr in &expr.elements {
-            if let Ok(value) = self.eval(expr) {
-                values.push(value);
-            } else {
-                return Err(Failure());
-            }
-        }
-        Ok(Value::Tuple { elements: values })
+    fn eval_tuple(&mut self, elements: &[ir::ExprId], ty: TypeId) -> Result<Value, Failure> {
+        let elems: Result<Vec<_>, _> = elements.iter().map(|el| self.eval(*el)).collect();
+        elems.map(|elems| Value::Tuple {
+            ty,
+            elements: elems,
+        })
     }
 
-    fn eval_block(&mut self, expr: &BlockExpr) -> Result<Value, Failure> {
+    fn eval_block(&mut self, expr_ids: &[ir::ExprId]) -> Result<Value, Failure> {
         let mut result = Ok(Value::Void);
-        for expr in &expr.body {
-            result = self.eval(expr);
+        for expr in expr_ids {
+            result = self.eval(*expr);
             if result.is_err() {
                 break;
             }
@@ -363,16 +300,21 @@ impl Evaluator {
         result
     }
 
-    fn eval_func_expr(&mut self, expr: &FunctionExpr, expr_id: ExprId) -> Result<Value, Failure> {
+    fn eval_func_expr(
+        &mut self,
+        expr: &ir::FunctionExpr,
+        expr_id: ir::ExprId,
+    ) -> Result<Value, Failure> {
+        let func_id = FunctionId(expr_id.0);
         self.declare(
             expr.name,
             Value::Function {
-                kind: FunctionKind::Verse(FunctionId(expr_id.0)),
+                kind: FunctionKind::Verse(func_id),
             },
         );
-        self.functions.insert(FunctionId(expr_id.0), expr.clone());
+        self.functions.insert(func_id, expr.clone());
         Ok(Value::Function {
-            kind: FunctionKind::Verse(FunctionId(expr_id.0)),
+            kind: FunctionKind::Verse(func_id),
         })
     }
 }

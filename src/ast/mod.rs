@@ -147,7 +147,7 @@ impl CallExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryOperator {
     Plus,
     Sub,
@@ -200,7 +200,7 @@ pub struct TemplateExpression {
     pub elements: Vec<TemplateElement>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum CompareOp {
     Eq,
     Ne,
@@ -225,8 +225,9 @@ impl CompareChainExpr {
     }
 }
 
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct TupleExpr {
+    pub id: ExprId,
     pub elements: Vec<Expression>,
 }
 

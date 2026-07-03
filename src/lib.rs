@@ -2,6 +2,7 @@ pub mod ast;
 pub mod core;
 pub mod debug;
 pub mod eval;
+pub mod ir;
 pub mod lexer;
 pub mod parser;
 pub mod runtime;

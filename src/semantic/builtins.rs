@@ -3,6 +3,7 @@ use crate::{
     semantic::{TypeId, TypeInfo, TypeRegistry},
 };
 
+#[allow(non_snake_case)]
 pub struct BuiltinSymbols {
     // types
     pub(crate) s_int: Symbol,
@@ -16,7 +17,7 @@ pub struct BuiltinSymbols {
     pub(crate) s_tuple: Symbol,
 
     // functions
-    pub(crate) s_print: Symbol,
+    pub(crate) s_Print: Symbol,
 }
 
 impl BuiltinSymbols {
@@ -31,8 +32,6 @@ impl BuiltinSymbols {
         let s_any = symbol_tbl.intern("any");
         let s_tuple = symbol_tbl.intern("tuple");
 
-        let s_print = symbol_tbl.intern("Print");
-
         Self {
             s_int,
             s_float,
@@ -44,11 +43,12 @@ impl BuiltinSymbols {
             s_any,
             s_tuple,
 
-            s_print,
+            s_Print: symbol_tbl.intern("Print"),
         }
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct BuiltinTypes {
     pub(crate) t_int: TypeId,
     pub(crate) t_float: TypeId,
