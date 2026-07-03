@@ -95,7 +95,6 @@ impl Evaluator {
             }
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
             ExprKind::Type(e) => Ok(Value::Type(*e)),
-            ExprKind::Decl(expr) => self.eval_declaration(expr),
             ExprKind::Set(expr) => self.eval_set(expr),
             ExprKind::Id(s) => self.eval_identifier(*s),
             ExprKind::Binary(expr) => self.eval_binary(expr),
@@ -116,12 +115,6 @@ impl Evaluator {
                 }
             }
         }
-    }
-
-    fn eval_declaration(&mut self, expr: &ir::DeclExpr) -> Result<Value, Failure> {
-        let value = self.eval(expr.value)?;
-        self.declare(expr.name, value.clone());
-        Ok(value)
     }
 
     fn eval_set(&mut self, expr: &ir::SetExpr) -> Result<Value, Failure> {

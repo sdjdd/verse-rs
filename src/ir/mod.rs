@@ -17,7 +17,6 @@ pub struct Ir {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Id(Symbol),
-    Decl(DeclExpr),
     Set(SetExpr),
     Int(i64),
     Float(f64),
@@ -37,12 +36,6 @@ pub enum ExprKind {
     Type(TypeId),
     NoOp,
     Cast { ty: TypeId, value: ExprId },
-}
-
-#[derive(Debug, Clone)]
-pub struct DeclExpr {
-    pub name: Symbol,
-    pub value: ExprId,
 }
 
 #[derive(Debug, Clone)]

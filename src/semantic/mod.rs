@@ -278,8 +278,8 @@ impl SemanticAnalyzer {
             expr_type: binding_type,
             ir_id: ar.ir_id.map(|value_ir| {
                 self.emit_ir(
-                    ir::ExprKind::Decl(ir::DeclExpr {
-                        name,
+                    ir::ExprKind::Set(ir::SetExpr {
+                        target: name,
                         value: value_ir,
                     }),
                     binding_type,
