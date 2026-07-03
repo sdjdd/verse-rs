@@ -1,6 +1,6 @@
 use crate::{core::SymbolTable, lexer::LexerError, parser::ParseError, semantic::SemanticError};
 
-pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: SymbolTable) {
+pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolTable) {
     let (span, suffix) = match err {
         SemanticError::Reference { span, symbol } => (
             span,

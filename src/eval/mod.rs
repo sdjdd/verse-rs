@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{BinaryOperator, CompareOp},
-    core::{Symbol, SymbolTable},
+    core::Symbol,
     ir,
     runtime::{CallContext, Failure, FunctionId, FunctionKind, TypeId, Value, builtin_funcs},
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
@@ -22,7 +22,6 @@ pub struct Evaluator {
 
 impl Evaluator {
     pub fn new(
-        mut symbol_table: SymbolTable,
         builtin_symbols: BuiltinSymbols,
         builtin_types: BuiltinTypes,
         irs: Vec<ir::Ir>,
@@ -30,7 +29,7 @@ impl Evaluator {
         let mut bindings = HashMap::new();
 
         bindings.insert(
-            symbol_table.intern("Print"),
+            builtin_symbols.s_Print,
             Value::Function {
                 kind: FunctionKind::Native(builtin_funcs::print),
             },

@@ -35,11 +35,10 @@ fn main() {
 
     let entry = semantic_ctx.analyze(&program.expressions);
     for err in &semantic_ctx.errors {
-        print_semantic_error(&err, &source, parser.get_symbol_table().clone());
+        print_semantic_error(&err, &source, parser.get_symbol_table());
     }
     if semantic_ctx.errors.is_empty() {
         let mut ctx = Evaluator::new(
-            parser.get_symbol_table().clone(),
             semantic_ctx.builtin_symbols,
             semantic_ctx.builtin_types,
             semantic_ctx.irs.clone(),
