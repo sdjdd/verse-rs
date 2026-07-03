@@ -4,7 +4,7 @@ use std::io::{self, Read};
 
 use verse::debug::{print_parser_error, print_semantic_error};
 use verse::eval::Evaluator;
-use verse::lexer::IndentAwareLexer;
+use verse::lexer::tokenize;
 use verse::parser::Parser;
 use verse::runtime::Value;
 use verse::semantic::SemanticAnalyzer;
@@ -18,11 +18,9 @@ fn main() {
         io::stdin().read_to_string(&mut buffer).unwrap();
         buffer
     };
-    let lexer = IndentAwareLexer::new(&source);
-    // for token in lexer.clone().into_iter() {
-    //     println!("{:?}", token)
-    // }
-    let mut parser = Parser::new(&source, lexer);
+
+    let tokens = tokenize(&source).unwrap();
+    let mut parser = Parser::new(&source, &tokens);
 
     let program = parser
         .parse()

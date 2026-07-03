@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     ast::*,
     core::{ConstId, ConstTable, ConstValue, SymbolTable},
-    lexer::{IndentAwareLexer, LexerError, Span, Token},
+    lexer::{LexerError, Span, Token},
     semantic::builtins::BuiltinSymbols,
 };
 
@@ -29,41 +29,30 @@ pub enum ParseError {
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-#[derive(Clone)]
-struct ParserState<'src> {
-    lex: IndentAwareLexer<'src>,
-    current_token: Option<Token>,
-    current_token_span: Span,
-}
-
 pub struct Parser<'src> {
     source: &'src str,
+    tokens: &'src [(Token, Span)],
+    pos: usize,
+    current_token_span: Span,
     symbol_table: SymbolTable,
     next_expr_id: usize,
-    state: ParserState<'src>,
-    states: Vec<ParserState<'src>>,
     builtin_symbols: BuiltinSymbols,
 
     pub const_table: ConstTable,
 }
 
 impl<'src> Parser<'src> {
-    pub fn new(source: &'src str, lexer: IndentAwareLexer<'src>) -> Self {
-        let state = ParserState {
-            lex: lexer,
-            current_token: None,
-            current_token_span: Default::default(),
-        };
-
+    pub fn new(source: &'src str, tokens: &'src [(Token, Span)]) -> Self {
         let mut st = SymbolTable::new();
         let builtin_symbols = BuiltinSymbols::install(&mut st);
 
         Self {
             source,
+            tokens,
+            pos: 0,
+            current_token_span: 0..0,
             symbol_table: st,
             next_expr_id: 0,
-            state,
-            states: vec![],
             builtin_symbols,
             const_table: ConstTable::new(),
         }
@@ -77,49 +66,26 @@ impl<'src> Parser<'src> {
         &mut self.symbol_table
     }
 
-    fn push_state(&mut self) {
-        self.states.push(self.state.clone());
-    }
-
-    fn pop_state(&mut self) {
-        if let Some(stored) = self.states.pop() {
-            self.state = stored
-        }
-    }
-
-    fn drop_state(&mut self) {
-        self.states.pop();
-    }
-
     fn span(&self) -> Span {
-        self.state.current_token_span.clone()
+        self.current_token_span.clone()
     }
 
     fn slice(&self) -> &'src str {
         &self.source[self.span()]
     }
 
-    fn peek(&mut self) -> ParseResult<Token> {
-        self.push_state();
-        let next_token = self.next()?;
-        self.pop_state();
-        Ok(next_token)
+    fn peek(&mut self) -> Token {
+        self.tokens.get(self.pos).map(|p| p.0).unwrap_or(Token::EOF)
     }
 
-    fn next(&mut self) -> ParseResult<Token> {
-        loop {
-            let (token, span) = match self.state.lex.next() {
-                Some((Ok(token), span)) => (token, span),
-                Some((Err(err), span)) => {
-                    return Err(ParseError::LexerError { inner: err, span });
-                }
-                None => (Token::EOF, 0..0),
-            };
-
-            self.state.current_token = Some(token);
-            self.state.current_token_span = span;
-
-            break Ok(token);
+    fn next(&mut self) -> Token {
+        if self.pos < self.tokens.len() {
+            let pair = &self.tokens[self.pos];
+            self.pos += 1;
+            self.current_token_span = pair.1.clone();
+            pair.0
+        } else {
+            Token::EOF
         }
     }
 
@@ -139,64 +105,55 @@ impl<'src> Parser<'src> {
 
     fn unexpected_error(&self) -> ParseError {
         ParseError::UnexpectedToken {
-            token: self.state.current_token.unwrap(),
+            token: self.tokens[self.pos].0,
             span: self.span(),
         }
     }
 
     fn expect(&mut self, token: Token) -> ParseResult<()> {
-        self.next().and_then(|actual| {
-            if token == actual {
-                Ok(())
-            } else {
-                Err(ParseError::UnexpectedToken {
-                    token: actual,
-                    span: self.span(),
-                })
-            }
-        })
-    }
-
-    fn consume_if(&mut self, token: Token) -> ParseResult<bool> {
-        self.push_state();
-        match self.next()? {
-            tk => {
-                if tk == token {
-                    self.drop_state();
-                    Ok(true)
-                } else {
-                    self.pop_state();
-                    Ok(false)
-                }
-            }
+        let found = self.next();
+        if token == found {
+            Ok(())
+        } else {
+            Err(ParseError::UnexpectedToken {
+                token: found,
+                span: self.span(),
+            })
         }
     }
 
-    fn skip_newlines(&mut self) -> ParseResult<()> {
-        while self.consume_if(Token::Newline)? {}
-        Ok(())
+    fn consume_if(&mut self, token: Token) -> bool {
+        if self.peek() == token {
+            self.next();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn skip_newlines(&mut self) {
+        while self.consume_if(Token::Newline) {}
     }
 
     pub fn parse(&mut self) -> ParseResult<Program> {
-        self.skip_newlines()?;
+        self.skip_newlines();
         let mut expressions = Vec::new();
-        while !matches!(self.peek()?, Token::EOF) {
+        while !matches!(self.peek(), Token::EOF) {
             expressions.push(self.parse_expression()?);
-            self.skip_newlines()?;
+            self.skip_newlines();
         }
         Ok(Program { expressions })
     }
 
     fn parse_expression(&mut self) -> ParseResult<Expression> {
-        match self.peek()? {
+        match self.peek() {
             Token::If => self.parse_if_expr(),
             Token::Set => self.parse_set_expr(),
             Token::Var => self.parse_var_decl_expr(),
             Token::Id => {
-                self.push_state();
+                let pos = self.pos;
                 self.parse_function_expr()
-                    .inspect(|_| self.drop_state())
-                    .inspect_err(|_| self.pop_state())
+                    .inspect_err(|_| self.pos = pos)
                     .or_else(|_| self.parse_decl_expr())
             }
             _ => self.parse_decl_expr(),
@@ -210,7 +167,7 @@ impl<'src> Parser<'src> {
             "tuple" => {
                 self.expect(Token::LParen)?;
                 let mut args = vec![self.parse_type_expr()?];
-                while self.consume_if(Token::Comma)? {
+                while self.consume_if(Token::Comma) {
                     args.push(self.parse_type_expr()?);
                 }
                 self.expect(Token::RParen)?;
@@ -240,8 +197,8 @@ impl<'src> Parser<'src> {
         let mut lhs = self.parse_compare_chain_expr()?;
 
         if let ExprKind::Id(id_expr) = &lhs.kind {
-            if self.consume_if(Token::Colon)? {
-                let typ = if self.consume_if(Token::Eq)? {
+            if self.consume_if(Token::Colon) {
+                let typ = if self.consume_if(Token::Eq) {
                     None
                 } else {
                     let typ = self.parse_type_expr()?;
@@ -300,7 +257,7 @@ impl<'src> Parser<'src> {
         let head = self.parse_additive_expr()?;
         let mut rest = Vec::new();
         loop {
-            let op = match self.peek()? {
+            let op = match self.peek() {
                 Token::Eq => CompareOp::Eq,
                 Token::NotEq => CompareOp::Ne,
                 Token::Greater => CompareOp::Gt,
@@ -309,7 +266,7 @@ impl<'src> Parser<'src> {
                 Token::LessEq => CompareOp::Le,
                 _ => break,
             };
-            self.next().unwrap();
+            self.next();
             let expr = self.parse_additive_expr()?;
             rest.push((op, expr));
         }
@@ -327,12 +284,12 @@ impl<'src> Parser<'src> {
     fn parse_additive_expr(&mut self) -> ParseResult<Expression> {
         let mut lhs = self.parse_multiplicative_expr()?;
         loop {
-            let op = match self.peek()? {
+            let op = match self.peek() {
                 Token::Plus => BinaryOperator::Plus,
                 Token::Minus => BinaryOperator::Sub,
                 _ => break,
             };
-            self.next().unwrap();
+            self.next();
             let rhs = self.parse_multiplicative_expr()?;
             lhs = self.make_expr(lhs.span.start..rhs.span.end, BinaryExpr::new(lhs, op, rhs));
         }
@@ -342,12 +299,12 @@ impl<'src> Parser<'src> {
     fn parse_multiplicative_expr(&mut self) -> ParseResult<Expression> {
         let mut lhs = self.parse_call_expr()?;
         loop {
-            let op = match self.peek()? {
+            let op = match self.peek() {
                 Token::Star => BinaryOperator::Mul,
                 Token::Slash => BinaryOperator::Div,
                 _ => break,
             };
-            self.next().unwrap();
+            self.next();
             let rhs = self.parse_call_expr()?;
             lhs = self.make_expr(lhs.span.start..rhs.span.end, BinaryExpr::new(lhs, op, rhs));
         }
@@ -358,11 +315,11 @@ impl<'src> Parser<'src> {
         self.expect(Token::If)?;
         let start = self.span().start;
 
-        let (test, consequent, alternate) = match self.next()? {
+        let (test, consequent, alternate) = match self.next() {
             Token::LParen => {
                 let test = self.parse_expression()?;
                 self.expect(Token::RParen)?;
-                let (consequent, alternate) = match self.next()? {
+                let (consequent, alternate) = match self.next() {
                     // if (test):
                     //     consequent
                     // else:
@@ -370,7 +327,7 @@ impl<'src> Parser<'src> {
                     Token::Colon => {
                         self.expect(Token::Newline)?;
                         let consequent = self.parse_block_expr()?;
-                        let alternate = if self.consume_if(Token::Else)? {
+                        let alternate = if self.consume_if(Token::Else) {
                             self.expect(Token::Colon)?;
                             self.expect(Token::Newline)?;
                             let alternate = self.parse_block_expr()?;
@@ -383,7 +340,7 @@ impl<'src> Parser<'src> {
                     // if (test) then consequent else alternate
                     Token::Then => {
                         let consequent = self.parse_expression()?;
-                        let alternate = if self.consume_if(Token::Else)? {
+                        let alternate = if self.consume_if(Token::Else) {
                             Some(self.parse_expression()?)
                         } else {
                             None
@@ -409,7 +366,7 @@ impl<'src> Parser<'src> {
                 self.expect(Token::Colon)?;
                 self.expect(Token::Newline)?;
                 let consequent = self.parse_block_expr()?;
-                let alternate = if self.consume_if(Token::Else)? {
+                let alternate = if self.consume_if(Token::Else) {
                     self.expect(Token::Colon)?;
                     self.expect(Token::Newline)?;
                     let alternate = self.parse_block_expr()?;
@@ -433,25 +390,25 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_block_expr(&mut self) -> ParseResult<Expression> {
-        self.skip_newlines()?;
+        self.skip_newlines();
         self.expect(Token::Indent)?;
         let start = self.span().end;
         let mut end = 0;
         let mut body = Vec::new();
         loop {
-            if matches!(self.peek()?, Token::Dedent | Token::EOF) {
-                self.next().unwrap();
+            if matches!(self.peek(), Token::Dedent | Token::EOF) {
+                self.next();
                 break;
             }
             body.push(self.parse_expression()?);
             end = self.span().end;
-            self.skip_newlines()?;
+            self.skip_newlines();
         }
         Ok(self.make_expr(start..end, BlockExpr::new(body)))
     }
 
     fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
-        let expr = match self.peek()? {
+        let expr = match self.peek() {
             Token::Id => self.parse_identifier_expr()?,
             Token::TemplateHead => self.parse_template_expression()?,
             Token::LParen => self.parse_tuple_expr()?,
@@ -461,28 +418,26 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_call_expr(&mut self) -> ParseResult<Expression> {
-        self.push_state();
+        let pos = self.pos;
         let mut callee = self.parse_primary_expr()?;
 
         if let ExprKind::Id(id_expr) = &callee.kind
             && id_expr.symbol == self.builtin_symbols.s_tuple
         {
-            self.pop_state();
+            self.pos = pos;
             let type_expr = self.parse_type_expr()?;
             return Ok(Expression {
                 id: type_expr.id,
                 span: type_expr.span.clone(),
                 kind: ExprKind::Type(type_expr),
             });
-        } else {
-            self.drop_state();
         }
 
-        while self.consume_if(Token::LParen)? {
+        while self.consume_if(Token::LParen) {
             let mut args = vec![];
-            while !self.consume_if(Token::RParen)? {
+            while !self.consume_if(Token::RParen) {
                 args.push(self.parse_expression()?);
-                self.consume_if(Token::Comma)?;
+                self.consume_if(Token::Comma);
             }
             callee = self.make_expr(
                 callee.span.start..self.span().end,
@@ -501,7 +456,7 @@ impl<'src> Parser<'src> {
         let mut parse_func_signature = || -> ParseResult<(Vec<FunctionParam>, TypeExpr)> {
             self.expect(Token::LParen)?;
             let mut params = vec![];
-            if !self.consume_if(Token::RParen)? {
+            if !self.consume_if(Token::RParen) {
                 loop {
                     self.expect(Token::Id)?;
                     let param_name = self.slice();
@@ -511,7 +466,7 @@ impl<'src> Parser<'src> {
                         name: symbol,
                         typ: self.parse_type_expr()?,
                     });
-                    if !self.consume_if(Token::Comma)? {
+                    if !self.consume_if(Token::Comma) {
                         break;
                     }
                 }
@@ -525,7 +480,7 @@ impl<'src> Parser<'src> {
 
         parse_func_signature().and_then(|(params, return_type)| {
             self.expect(Token::Eq)?;
-            let body = if self.consume_if(Token::Newline)? {
+            let body = if self.consume_if(Token::Newline) {
                 self.parse_block_expr()?
             } else {
                 self.parse_expression()?
@@ -544,7 +499,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
-        let expr = match self.next()? {
+        let expr = match self.next() {
             Token::IntegerLiteral => self.parse_integer_literal()?,
             Token::FloatLiteral => self.parse_float_literal()?,
             Token::CharLiteral => self.parse_char_literal()?,
@@ -624,9 +579,9 @@ impl<'src> Parser<'src> {
             self.escape_string_literal(&src[1..src.len() - 1]),
         ));
         loop {
-            match self.peek()? {
+            match self.peek() {
                 Token::TemplateMiddle => {
-                    self.next().unwrap();
+                    self.next();
                     let src = self.slice();
                     elements.push(TemplateElement::Raw(
                         self.escape_string_literal(&src[1..src.len() - 1]),
@@ -666,12 +621,12 @@ impl<'src> Parser<'src> {
         self.expect(Token::LParen)?;
         let start = self.span().start;
         let expr = self.parse_expression()?;
-        match self.next()? {
+        match self.next() {
             Token::Comma => {
                 let mut elements = vec![expr];
-                while !self.consume_if(Token::RParen)? {
+                while !self.consume_if(Token::RParen) {
                     elements.push(self.parse_expression()?);
-                    self.consume_if(Token::Comma)?;
+                    self.consume_if(Token::Comma);
                 }
                 let id = self.generate_expr_id();
                 Ok(Expression {

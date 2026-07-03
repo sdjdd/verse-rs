@@ -2,23 +2,20 @@ use std::{collections::VecDeque, ops::Range};
 
 use logos::{Logos, SpannedIter};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TokenInfo {
-    pub indent: usize,
-}
+pub type Span = Range<usize>;
 
 #[derive(Default, Debug, PartialEq, Clone)]
 pub enum LexerError {
+    InvalidToken(Span),
+    InvalidIndentSize(Span),
+    InconsistentIndent(Span),
     #[default]
-    Unknown,
-    InvalidToken(String),
-    InvalidIndentSize,
-    InconsistentIndent,
+    Other,
 }
 
 impl LexerError {
     fn from_lexer(lex: &mut Lexer) -> Self {
-        Self::InvalidToken(lex.slice().to_string())
+        Self::InvalidToken(lex.span().clone())
     }
 }
 
@@ -140,8 +137,6 @@ pub enum Token {
 
 pub type Lexer<'src> = logos::Lexer<'src, Token>;
 
-pub type Span = Range<usize>;
-
 #[derive(Clone, Copy, PartialEq)]
 enum IndentType {
     Space,
@@ -157,7 +152,7 @@ struct IndentInfo {
 #[derive(Clone)]
 pub struct IndentAwareLexer<'src> {
     lexer: SpannedIter<'src, Token>,
-    pending: VecDeque<(Result<Token, LexerError>, logos::Span)>,
+    pending: VecDeque<Result<(Token, Span), LexerError>>,
     indent_stack: Vec<IndentInfo>,
     current_indent: Option<IndentInfo>,
     at_line_start: bool,
@@ -178,7 +173,7 @@ impl<'src> IndentAwareLexer<'src> {
 }
 
 impl<'src> Iterator for IndentAwareLexer<'src> {
-    type Item = (Result<Token, LexerError>, logos::Span);
+    type Item = Result<(Token, Span), LexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.pending.is_empty() {
@@ -192,8 +187,8 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
 
             let (token, span) = match self.lexer.next() {
                 Some((Ok(token), span)) => (token, span),
-                Some(t @ (Err(_), _)) => {
-                    self.pending.push_back(t);
+                Some((Err(err), _)) => {
+                    self.pending.push_back(Err(err));
                     self.has_error = true;
                     break;
                 }
@@ -222,7 +217,7 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                             // Check for inconsistency with existing indent
                             if indent.typ != new_typ {
                                 self.has_error = true;
-                                return Some((Err(LexerError::InconsistentIndent), span));
+                                return Some(Err(LexerError::InconsistentIndent(span)));
                             }
                             // Extend the span
                             self.current_indent.as_mut().unwrap().span.end = span.end;
@@ -239,7 +234,7 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                             (IndentType::Space, Token::Tabs)
                             | (IndentType::Tab, Token::Whitespaces) => {
                                 self.has_error = true;
-                                return Some((Err(LexerError::InconsistentIndent), span));
+                                return Some(Err(LexerError::InconsistentIndent(span)));
                             }
                             _ => {}
                         }
@@ -264,7 +259,7 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                                     span: current_indent.span.clone(),
                                 });
                                 self.pending
-                                    .push_back((Ok(Token::Indent), current_indent.span.clone()));
+                                    .push_back(Ok((Token::Indent, current_indent.span.clone())));
                             } else if current_size < last_size {
                                 if let Some(pos) = self
                                     .indent_stack
@@ -272,25 +267,24 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                                     .rposition(|v| v.span.clone().count() == current_size)
                                 {
                                     for _ in pos + 1..self.indent_stack.len() {
-                                        self.pending.push_back((
-                                            Ok(Token::Dedent),
+                                        self.pending.push_back(Ok((
+                                            Token::Dedent,
                                             current_indent.span.clone(),
-                                        ));
+                                        )));
                                     }
                                     self.indent_stack.truncate(pos + 1);
                                 } else {
                                     self.has_error = true;
                                     self.pending.clear();
-                                    return Some((
-                                        Err(LexerError::InvalidIndentSize),
+                                    return Some(Err(LexerError::InvalidIndentSize(
                                         current_indent.span.clone(),
-                                    ));
+                                    )));
                                 }
                             }
                         } else if !self.indent_stack.is_empty() {
                             for _ in &self.indent_stack {
                                 self.pending
-                                    .push_back((Ok(Token::Dedent), span.start..span.start)); // zero size dedent
+                                    .push_back(Ok((Token::Dedent, span.start..span.start))); // zero size dedent
                             }
                             self.indent_stack.clear();
                         }
@@ -300,7 +294,7 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                 }
             }
 
-            self.pending.push_back((Ok(token), span));
+            self.pending.push_back(Ok((token, span)));
             break;
         }
 
@@ -308,18 +302,24 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
     }
 }
 
+pub fn tokenize(source: &str) -> Result<Vec<(Token, Span)>, LexerError> {
+    let lex = IndentAwareLexer::new(source);
+    lex.collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn lex(source: &str) -> Vec<(Result<Token, LexerError>, Span)> {
+    fn lex(source: &str) -> Vec<Result<(Token, Span), LexerError>> {
         IndentAwareLexer::new(source).collect()
     }
 
     fn lex_ok(source: &str) -> Vec<Token> {
         lex(source)
             .into_iter()
-            .filter_map(|(r, _)| r.ok())
+            .filter_map(|r| r.ok())
+            .map(|p| p.0)
             .collect()
     }
 
@@ -384,7 +384,7 @@ mod tests {
         assert!(
             results
                 .iter()
-                .any(|(r, _)| matches!(r, Err(LexerError::InconsistentIndent)))
+                .any(|r| matches!(r, Err(LexerError::InconsistentIndent(_))))
         );
     }
 

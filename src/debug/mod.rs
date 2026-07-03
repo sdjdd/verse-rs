@@ -60,13 +60,17 @@ pub fn print_parser_error(err: &ParseError, src: &str) {
                 start_pos.0, start_pos.1, end_pos.0, end_pos.1, token
             )
         }
-        ParseError::LexerError { inner, span } => match inner {
-            LexerError::InvalidToken(token) => {
+        ParseError::LexerError { inner, .. } => match inner {
+            LexerError::InvalidToken(span) => {
                 let start_pos = get_source_position(src, span.start).unwrap();
                 let end_pos = get_source_position(src, span.end).unwrap();
                 println!(
                     "{}:{}-{}:{} Invalid token `{}`",
-                    start_pos.0, start_pos.1, end_pos.0, end_pos.1, token
+                    start_pos.0,
+                    start_pos.1,
+                    end_pos.0,
+                    end_pos.1,
+                    &src[span.clone()]
                 )
             }
             _ => unimplemented!(),
