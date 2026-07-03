@@ -1,6 +1,9 @@
 use derive_more::{Constructor, From};
 
-use crate::{core::Symbol, lexer::Span};
+use crate::{
+    core::{ConstId, Symbol},
+    lexer::Span,
+};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ExprId(pub(crate) usize);
@@ -22,7 +25,7 @@ pub enum ExprKind {
     Float(f64),
     Char(u8),
     Char32(char),
-    String(String),
+    String(ConstId),
     Logic(bool),
     Call(CallExpr),
     Binary(BinaryExpr),
@@ -191,7 +194,7 @@ impl IfExpr {
 
 #[derive(Debug, Clone)]
 pub enum TemplateElement {
-    Raw(String),
+    Raw(ConstId),
     Expr(Expression),
 }
 

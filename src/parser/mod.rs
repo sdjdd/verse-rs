@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     ast::*,
-    core::SymbolTable,
+    core::{ConstId, ConstTable, ConstValue, SymbolTable},
     lexer::{IndentAwareLexer, LexerError, Span, Token},
     semantic::builtins::BuiltinSymbols,
 };
@@ -43,6 +43,8 @@ pub struct Parser<'src> {
     state: ParserState<'src>,
     states: Vec<ParserState<'src>>,
     builtin_symbols: BuiltinSymbols,
+
+    pub const_table: ConstTable,
 }
 
 impl<'src> Parser<'src> {
@@ -63,6 +65,7 @@ impl<'src> Parser<'src> {
             state,
             states: vec![],
             builtin_symbols,
+            const_table: ConstTable::new(),
         }
     }
 
@@ -641,7 +644,7 @@ impl<'src> Parser<'src> {
         Ok(self.make_expr(start..self.span().end, TemplateExpression::new(elements)))
     }
 
-    fn escape_string_literal(&self, src: &str) -> String {
+    fn escape_string_literal(&mut self, src: &str) -> ConstId {
         let mut chars = Vec::new();
         let mut escaped = false;
         for mut ch in src.chars() {
@@ -655,7 +658,8 @@ impl<'src> Parser<'src> {
             }
             chars.push(ch);
         }
-        chars.iter().collect()
+        self.const_table
+            .intern(ConstValue::String(chars.iter().collect()))
     }
 
     fn parse_tuple_expr(&mut self) -> ParseResult<Expression> {

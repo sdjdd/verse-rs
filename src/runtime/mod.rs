@@ -22,7 +22,7 @@ pub enum FunctionKind {
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct TypeId(pub usize);
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Void,
     Integer(i64),

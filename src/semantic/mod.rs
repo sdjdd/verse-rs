@@ -422,7 +422,7 @@ impl SemanticAnalyzer {
                     .handle_expr(expr)
                     .ir_id
                     .map(|ir| ir::TemplateElement::Expr(ir)),
-                TemplateElement::Raw(str) => Some(ir::TemplateElement::String(str.clone())),
+                TemplateElement::Raw(const_id) => Some(ir::TemplateElement::String(*const_id)),
             })
             .collect();
 

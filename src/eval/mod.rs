@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{BinaryOperator, CompareOp},
-    core::Symbol,
+    core::{ConstTable, ConstValue, Symbol},
     ir,
     runtime::{CallContext, Failure, FunctionId, FunctionKind, TypeId, Value, builtin_funcs},
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
@@ -18,12 +18,14 @@ pub struct Evaluator {
     functions: HashMap<FunctionId, ir::FunctionExpr>,
     builtin_types: BuiltinTypes,
     irs: Vec<ir::Ir>,
+    const_table: ConstTable,
 }
 
 impl Evaluator {
     pub fn new(
         builtin_symbols: BuiltinSymbols,
         builtin_types: BuiltinTypes,
+        const_table: ConstTable,
         irs: Vec<ir::Ir>,
     ) -> Self {
         let mut bindings = HashMap::new();
@@ -49,6 +51,7 @@ impl Evaluator {
             functions: HashMap::new(),
             builtin_types: builtin_types,
             irs,
+            const_table,
         }
     }
 
@@ -86,7 +89,10 @@ impl Evaluator {
             ExprKind::Float(value) => Ok(Value::Float(*value)),
             ExprKind::Char(value) => Ok(Value::Char(*value)),
             ExprKind::Char32(value) => Ok(Value::Char32(*value)),
-            ExprKind::String(value) => Ok(Value::String(value.clone())),
+            ExprKind::String(const_id) => {
+                let ConstValue::String(s) = self.const_table.get(*const_id).unwrap();
+                Ok(Value::String(s.clone()))
+            }
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
             ExprKind::Type(e) => Ok(Value::Type(*e)),
             ExprKind::Decl(expr) => self.eval_declaration(expr),
@@ -226,7 +232,10 @@ impl Evaluator {
         let elems: Result<Vec<_>, _> = elements
             .iter()
             .map(|el| match el {
-                ir::TemplateElement::String(str) => Ok(str.clone()),
+                ir::TemplateElement::String(const_id) => {
+                    let ConstValue::String(s) = self.const_table.get(*const_id).unwrap();
+                    Ok(s.clone())
+                }
                 ir::TemplateElement::Expr(expr) => self.eval(*expr).map(|v| v.to_string()),
             })
             .collect();

@@ -1,6 +1,6 @@
 use crate::{
     ast::{BinaryOperator, CompareOp},
-    core::Symbol,
+    core::{ConstId, Symbol},
     runtime::TypeId,
 };
 
@@ -23,7 +23,7 @@ pub enum ExprKind {
     Float(f64),
     Char(u8),
     Char32(char),
-    String(String), // TODO: use const table
+    String(ConstId),
     Logic(bool),
     Call(CallExpr),
     GetTupleElem { tuple: ExprId, index: usize },
@@ -73,7 +73,7 @@ pub struct IfExpr {
 
 #[derive(Debug, Clone)]
 pub enum TemplateElement {
-    String(String), // TODO: use const table
+    String(ConstId),
     Expr(ExprId),
 }
 
