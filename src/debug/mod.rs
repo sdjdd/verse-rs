@@ -75,7 +75,14 @@ pub fn print_parser_error(err: &ParseError, src: &str) {
             }
             _ => unimplemented!(),
         },
-        _ => unimplemented!("{err:?}"),
+        ParseError::SyntaxError { message, span } => {
+            let start_pos = get_source_position(src, span.start).unwrap();
+            let end_pos = get_source_position(src, span.end).unwrap();
+            println!(
+                "{}:{}-{}:{} {}",
+                start_pos.0, start_pos.1, end_pos.0, end_pos.1, message
+            )
+        }
     }
 }
 

@@ -209,7 +209,7 @@ impl<'src> Parser<'src> {
         self.expect(Token::Set)?;
         let start = self.span().start;
 
-        let target_expr = self.parse_expression()?;
+        let target_expr = self.parse_additive_expr()?;
         let target: LValue =
             target_expr
                 .try_into()
