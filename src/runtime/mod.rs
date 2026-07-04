@@ -1,9 +1,13 @@
+use crate::runtime::heap::{Heap, ObjectId};
+
 pub mod builtin_funcs;
+pub mod heap;
 
 #[derive(Debug)]
 pub struct Failure();
 
 pub struct CallContext<'a> {
+    pub heap: &'a dyn Heap,
     pub args: &'a [Value],
     pub ret_val: Option<Result<Value, Failure>>,
 }
@@ -22,7 +26,7 @@ pub enum FunctionKind {
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct TypeId(pub usize);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Value {
     Void,
     Integer(i64),
@@ -30,10 +34,10 @@ pub enum Value {
     Float(f64),
     Char(u8),
     Char32(char),
-    String(String),
+    String(ObjectId),
     Logic(bool),
 
-    Tuple { ty: TypeId, elements: Vec<Value> },
+    Tuple { ty: TypeId, oid: ObjectId },
     Function { kind: FunctionKind },
     Type(TypeId),
 }
@@ -67,34 +71,6 @@ impl Value {
             Value::Integer(v) => *v == 0,
             Value::Float(v) => *v == 0.0,
             Value::Rational(v, ..) => *v == 0,
-            _ => unimplemented!(),
-        }
-    }
-}
-
-impl std::fmt::Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Void => Ok(()),
-            Value::Logic(value) => write!(f, "{}", value),
-            Value::Integer(value) => write!(f, "{}", value),
-            Value::Rational(num, den) => write!(f, "{}/{}", num, den),
-            Value::Float(value) => write!(f, "{}", value),
-            Value::Char(value) => write!(f, "{}", *value as char),
-            Value::Char32(value) => write!(f, "{}", value),
-            Value::String(value) => write!(f, r#""{}""#, value),
-            Value::Tuple {
-                elements: value, ..
-            } => {
-                write!(f, "(")?;
-                for (i, v) in value.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", v)?;
-                }
-                write!(f, ")")
-            }
             _ => unimplemented!(),
         }
     }

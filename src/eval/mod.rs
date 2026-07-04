@@ -4,7 +4,11 @@ use crate::{
     ast::{BinaryOperator, CompareOp},
     core::{ConstValue, Symbol},
     ir,
-    runtime::{CallContext, Failure, FunctionId, FunctionKind, TypeId, Value, builtin_funcs},
+    runtime::{
+        CallContext, Failure, FunctionId, FunctionKind, TypeId, Value,
+        builtin_funcs::{self, write_value},
+        heap::{Heap, HeapObj, SimpleHeap},
+    },
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
 
@@ -19,6 +23,7 @@ pub struct Evaluator {
     builtin_types: BuiltinTypes,
     irs: Vec<ir::Ir>,
     const_table: Vec<ConstValue>,
+    heap: Box<dyn Heap>,
 }
 
 impl Evaluator {
@@ -52,6 +57,7 @@ impl Evaluator {
             builtin_types: builtin_types,
             irs,
             const_table,
+            heap: Box::new(SimpleHeap::new()),
         }
     }
 
@@ -90,8 +96,9 @@ impl Evaluator {
             ExprKind::Char(value) => Ok(Value::Char(*value)),
             ExprKind::Char32(value) => Ok(Value::Char32(*value)),
             ExprKind::String(const_id) => {
-                let ConstValue::String(s) = &self.const_table[const_id.0];
-                Ok(Value::String(s.clone()))
+                let ConstValue::String(str) = &self.const_table[const_id.0];
+                let id = self.heap.alloc_obj(HeapObj::String(str.clone()));
+                Ok(Value::String(id))
             }
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
             ExprKind::Type(e) => Ok(Value::Type(*e)),
@@ -108,8 +115,12 @@ impl Evaluator {
             ExprKind::Cast { ty, value } => self.test_value_type(*value, *ty),
             ExprKind::NoOp => Ok(Value::Void),
             ExprKind::GetTupleElem { tuple, index } => {
-                if let Value::Tuple { elements, .. } = self.eval(*tuple)? {
-                    Ok(elements[*index].clone())
+                if let Value::Tuple { oid, .. } = self.eval(*tuple)? {
+                    let elements = match self.heap.fetch_obj(oid) {
+                        HeapObj::Vec(elems) => elems,
+                        _ => panic!("tuple accidently refs a non-vec object"),
+                    };
+                    Ok(elements[*index])
                 } else {
                     panic!("GetTupleElem on a non-tuple value")
                 }
@@ -139,6 +150,7 @@ impl Evaluator {
                         expr.args.iter().map(|arg| self.eval(*arg)).collect();
                     args.and_then(|args| {
                         let mut ctx = CallContext {
+                            heap: self.heap.as_ref(),
                             args: &args,
                             ret_val: None,
                         };
@@ -229,11 +241,17 @@ impl Evaluator {
                     let ConstValue::String(s) = &self.const_table[const_id.0];
                     Ok(s.clone())
                 }
-                ir::TemplateElement::Expr(expr) => self.eval(*expr).map(|v| v.to_string()),
+                ir::TemplateElement::Expr(expr) => self.eval(*expr).map(|v| {
+                    let mut s = String::new();
+                    write_value(&mut s, self.heap.as_ref(), &v, false).unwrap();
+                    s
+                }),
             })
             .collect();
 
-        elems.map(|elems| Value::String(elems.concat()))
+        let elems = elems?;
+        let id = self.heap.alloc_obj(HeapObj::String(elems.concat()));
+        Ok(Value::String(id))
     }
 
     fn eval_compare_chain(&mut self, expr: &ir::CompareChainExpr) -> Result<Value, Failure> {
@@ -284,10 +302,9 @@ impl Evaluator {
 
     fn eval_tuple(&mut self, elements: &[ir::ExprId], ty: TypeId) -> Result<Value, Failure> {
         let elems: Result<Vec<_>, _> = elements.iter().map(|el| self.eval(*el)).collect();
-        elems.map(|elems| Value::Tuple {
-            ty,
-            elements: elems,
-        })
+        let elems = elems?;
+        let oid = self.heap.alloc_obj(HeapObj::Vec(elems));
+        Ok(Value::Tuple { ty, oid })
     }
 
     fn eval_block(&mut self, expr_ids: &[ir::ExprId]) -> Result<Value, Failure> {
