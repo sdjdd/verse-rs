@@ -80,7 +80,7 @@ impl Evaluator {
     pub fn resolve_symbol(&self, symbol: Symbol) -> Option<Value> {
         for scope in self.scopes.iter().rev() {
             if let Some(v) = scope.bindings.get(&symbol) {
-                return Some(v.clone());
+                return Some(*v);
             }
         }
         None
@@ -130,13 +130,13 @@ impl Evaluator {
 
     fn eval_set(&mut self, expr: &ir::SetExpr) -> Result<Value, Failure> {
         let value = self.eval(expr.value)?;
-        self.declare(expr.target, value.clone());
+        self.declare(expr.target, value);
         Ok(value)
     }
 
     fn eval_identifier(&mut self, symbol: Symbol) -> Result<Value, Failure> {
         if let Some(value) = self.resolve_symbol(symbol) {
-            Ok(value.clone())
+            Ok(value)
         } else {
             panic!("identifier not defined, symbol: {:?}", symbol)
         }
@@ -256,7 +256,7 @@ impl Evaluator {
 
     fn eval_compare_chain(&mut self, expr: &ir::CompareChainExpr) -> Result<Value, Failure> {
         let leftmost = self.eval(expr.head)?;
-        let mut prev = leftmost.clone();
+        let mut prev = leftmost;
 
         for (op, expr) in &expr.rest {
             let current = self.eval(*expr)?;
