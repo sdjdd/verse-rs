@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{BinaryOperator, CompareOp},
-    core::{ConstTable, ConstValue, Symbol},
+    core::{ConstValue, Symbol},
     ir,
     runtime::{CallContext, Failure, FunctionId, FunctionKind, TypeId, Value, builtin_funcs},
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
@@ -18,14 +18,14 @@ pub struct Evaluator {
     functions: HashMap<FunctionId, ir::FunctionExpr>,
     builtin_types: BuiltinTypes,
     irs: Vec<ir::Ir>,
-    const_table: ConstTable,
+    const_table: Vec<ConstValue>,
 }
 
 impl Evaluator {
     pub fn new(
         builtin_symbols: BuiltinSymbols,
         builtin_types: BuiltinTypes,
-        const_table: ConstTable,
+        const_table: Vec<ConstValue>,
         irs: Vec<ir::Ir>,
     ) -> Self {
         let mut bindings = HashMap::new();
@@ -90,7 +90,7 @@ impl Evaluator {
             ExprKind::Char(value) => Ok(Value::Char(*value)),
             ExprKind::Char32(value) => Ok(Value::Char32(*value)),
             ExprKind::String(const_id) => {
-                let ConstValue::String(s) = self.const_table.get(*const_id).unwrap();
+                let ConstValue::String(s) = &self.const_table[const_id.0];
                 Ok(Value::String(s.clone()))
             }
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
@@ -226,7 +226,7 @@ impl Evaluator {
             .iter()
             .map(|el| match el {
                 ir::TemplateElement::String(const_id) => {
-                    let ConstValue::String(s) = self.const_table.get(*const_id).unwrap();
+                    let ConstValue::String(s) = &self.const_table[const_id.0];
                     Ok(s.clone())
                 }
                 ir::TemplateElement::Expr(expr) => self.eval(*expr).map(|v| v.to_string()),

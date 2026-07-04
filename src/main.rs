@@ -39,7 +39,7 @@ fn main() {
         let mut ctx = Evaluator::new(
             semantic_ctx.builtin_symbols,
             semantic_ctx.builtin_types,
-            parser.const_table.clone(),
+            parser.const_pool.into_table(),
             semantic_ctx.irs.clone(),
         );
         let mut value = Ok(Value::Void);

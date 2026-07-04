@@ -2,10 +2,13 @@ use thiserror::Error;
 
 use crate::{
     ast::*,
-    core::{ConstId, ConstTable, ConstValue, SymbolTable},
+    core::{ConstId, ConstValue, SymbolTable},
     lexer::{LexerError, Span, Token},
+    parser::const_pool::ConstPool,
     semantic::builtins::BuiltinSymbols,
 };
+
+mod const_pool;
 
 #[derive(Debug)]
 pub struct Program {
@@ -37,7 +40,7 @@ pub struct Parser<'src> {
     symbol_table: SymbolTable,
     builtin_symbols: BuiltinSymbols,
 
-    pub const_table: ConstTable,
+    pub const_pool: ConstPool,
 }
 
 impl<'src> Parser<'src> {
@@ -52,7 +55,7 @@ impl<'src> Parser<'src> {
             current_token_span: 0..0,
             symbol_table: st,
             builtin_symbols,
-            const_table: ConstTable::new(),
+            const_pool: ConstPool::new(),
         }
     }
 
@@ -600,7 +603,7 @@ impl<'src> Parser<'src> {
             }
             chars.push(ch);
         }
-        self.const_table
+        self.const_pool
             .intern(ConstValue::String(chars.iter().collect()))
     }
 
