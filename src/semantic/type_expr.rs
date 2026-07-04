@@ -29,13 +29,16 @@ impl SemanticAnalyzer {
                 });
                 self.builtin_types.t_any
             })(),
+            TypeExprKind::Option(inner) => {
+                let inner = self.handle_type_expr(inner);
+                self.types.intern(TypeInfo::Option(inner))
+            }
             TypeExprKind::Tuple(args) => {
                 let mut arg_ids = vec![];
                 for arg in args {
                     arg_ids.push(self.handle_type_expr(arg));
                 }
-                let inner_type = self.types.intern(TypeInfo::Tuple(arg_ids));
-                self.types.intern(TypeInfo::Type(inner_type))
+                self.types.intern(TypeInfo::Tuple(arg_ids))
             }
             TypeExprKind::Function { params, ret } => {
                 let param_types: Vec<_> = params.iter().map(|p| self.handle_type_expr(p)).collect();

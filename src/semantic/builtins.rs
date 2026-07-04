@@ -14,6 +14,7 @@ pub struct BuiltinSymbols {
     pub(crate) s_void: Symbol,
     pub(crate) s_any: Symbol,
     pub(crate) s_tuple: Symbol,
+    pub(crate) s_option: Symbol,
     pub(crate) s_Print: Symbol,
     pub(crate) s_Length: Symbol,
 }
@@ -40,6 +41,7 @@ impl BuiltinSymbols {
             s_void,
             s_any,
             s_tuple,
+            s_option: symbol_tbl.intern("option"),
             s_Print: symbol_tbl.intern("Print"),
             s_Length: symbol_tbl.intern("Length"),
         }
@@ -50,6 +52,7 @@ impl BuiltinSymbols {
 pub struct BuiltinTypes {
     pub(crate) t_int: TypeId,
     pub(crate) t_float: TypeId,
+    pub(crate) t_false: TypeId,
     pub(crate) t_logic: TypeId,
     pub(crate) t_char: TypeId,
     pub(crate) t_char32: TypeId,
@@ -72,6 +75,7 @@ impl BuiltinTypes {
         Self {
             t_int,
             t_float,
+            t_false: type_reg.intern(TypeInfo::False),
             t_logic,
             t_char,
             t_char32,

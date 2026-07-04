@@ -3,6 +3,7 @@ use crate::runtime::Value;
 pub enum HeapObj {
     String(String),
     Vec(Vec<Value>),
+    Value(Value),
 }
 
 #[derive(Debug, Clone, Copy)]

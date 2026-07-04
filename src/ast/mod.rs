@@ -33,11 +33,13 @@ pub enum ExprKind {
     Func(FunctionExpr),
     Type(TypeExpr),
     Member(MemberExpr),
+    Construct(ConstructExpr),
 }
 
 #[derive(Debug, Clone)]
 pub enum TypeExprKind {
     Named(Symbol),
+    Option(Box<TypeExpr>),
     Tuple(Vec<TypeExpr>),
     Function {
         params: Vec<TypeExpr>,
@@ -268,4 +270,10 @@ impl FunctionExpr {
 pub struct MemberExpr {
     pub object: Box<Expression>,
     pub property: Box<Expression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConstructExpr {
+    pub callee: Box<Expression>,
+    pub arg: Box<Expression>,
 }

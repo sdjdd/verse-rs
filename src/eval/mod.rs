@@ -132,6 +132,7 @@ impl Evaluator {
                 }
             }
             ExprKind::GetLength(id) => self.eval_get_length(*id),
+            ExprKind::Option(id) => self.eval_option_value(*id),
         }
     }
 
@@ -146,6 +147,16 @@ impl Evaluator {
             Ok(value)
         } else {
             panic!("identifier not defined, symbol: {:?}", symbol)
+        }
+    }
+
+    fn eval_option_value(&mut self, expr_id: Option<ExprId>) -> Result<Value, Failure> {
+        if let Some(id) = expr_id {
+            let value = self.eval(id)?;
+            let obj_id = self.heap.alloc_obj(HeapObj::Value(value));
+            Ok(Value::Option(Some(obj_id)))
+        } else {
+            Ok(Value::Option(None))
         }
     }
 

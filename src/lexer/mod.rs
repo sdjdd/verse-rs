@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, ops::Range};
 
-use logos::{Logos, SpannedIter};
+use logos::{Lexer, Logos, SpannedIter};
 
 pub type Span = Range<usize>;
 
@@ -14,7 +14,7 @@ pub enum LexerError {
 }
 
 impl LexerError {
-    fn from_lexer(lex: &mut Lexer) -> Self {
+    fn from_lexer(lex: &mut Lexer<Token>) -> Self {
         Self::InvalidToken(lex.span().clone())
     }
 }
@@ -22,7 +22,7 @@ impl LexerError {
 #[derive(Logos, Debug, PartialEq, Clone, Copy)]
 #[logos(error(LexerError, LexerError::from_lexer))]
 #[logos(subpattern escape = r#"[tnr"'\\{}<>&#~]"#)]
-#[logos(subpattern string = r#"([^"{}]|\\.)*"#)]
+#[logos(subpattern string = r#"([^"{}\\\r\n]|\\.)*"#)]
 pub enum Token {
     #[regex(r"[ ]+")]
     Whitespaces,
@@ -36,6 +36,9 @@ pub enum Token {
     #[token(".")]
     Dot,
 
+    #[token("?")]
+    Question,
+
     #[token(":")]
     Colon,
 
@@ -44,6 +47,12 @@ pub enum Token {
 
     #[token(")")]
     RParen,
+
+    #[token("{")]
+    LBrace,
+
+    #[token("}")]
+    RBrace,
 
     #[token(",")]
     Comma,
@@ -137,8 +146,6 @@ pub enum Token {
 
     EOF,
 }
-
-pub type Lexer<'src> = logos::Lexer<'src, Token>;
 
 #[derive(Clone, Copy, PartialEq)]
 enum IndentType {

@@ -1,6 +1,16 @@
-use crate::{core::SymbolTable, lexer::LexerError, parser::ParseError, semantic::SemanticError};
+use crate::{
+    core::SymbolTable,
+    lexer::LexerError,
+    parser::ParseError,
+    semantic::{SemanticError, TypeRegistry},
+};
 
-pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolTable) {
+pub fn print_semantic_error(
+    err: &SemanticError,
+    src: &str,
+    symbol_tbl: &SymbolTable,
+    types: &TypeRegistry,
+) {
     let (span, suffix) = match err {
         SemanticError::Reference { span, symbol } => (
             span,
@@ -12,7 +22,11 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolT
             found,
         } => (
             span,
-            format!("type mismatched, expect: {:?}, found: {:?}", expect, found),
+            format!(
+                "type mismatched, expect: {:?}, found: {:?}",
+                types.lookup(*expect).unwrap(),
+                types.lookup(*found).unwrap()
+            ),
         ),
         SemanticError::TypeNotFound { span, symbol } => (
             span,

@@ -37,6 +37,7 @@ pub enum Value {
     String(ObjectId),
     Logic(bool),
 
+    Option(Option<ObjectId>),
     Tuple { ty: TypeId, oid: ObjectId },
     Function { kind: FunctionKind },
     Type(TypeId),

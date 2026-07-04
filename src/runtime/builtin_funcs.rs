@@ -46,6 +46,7 @@ pub fn write_value(
         }
         Value::Function { .. } => write!(w, "[Function]"),
         Value::Type { .. } => write!(w, "[Type]"),
+        Value::Option(_) => write!(w, "[Option]"),
     }
 }
 

@@ -21,14 +21,15 @@ pub enum TypeInfo {
     Any,
     Int,
     Float,
+    False,
     Logic,
     Char,
     Char32,
     String,
 
+    Option(TypeId),
     Tuple(Vec<TypeId>),
     Function { params: Vec<TypeId>, ret: TypeId },
-    Option(TypeId),
 
     Type(TypeId),
 }
@@ -80,7 +81,7 @@ pub struct SemanticAnalyzer {
     pub irs: Vec<Ir>,
 
     scopes: Vec<Scope>,
-    types: TypeRegistry,
+    pub types: TypeRegistry,
 }
 
 impl SemanticAnalyzer {
@@ -150,14 +151,22 @@ impl SemanticAnalyzer {
             return true;
         }
 
+        let from = self.types.lookup(from).unwrap();
+        let to = self.types.lookup(to).unwrap();
+
+        match (from, to) {
+            (TypeInfo::False, TypeInfo::Option(_)) => return true,
+            _ => {}
+        }
+
         false
     }
 
     fn emit_type_mismatch_error(&mut self, span: Span, expect: TypeId, found: TypeId) {
         self.errors.push(SemanticError::TypeMismatch {
             span,
-            expect: self.types.lookup(expect).unwrap().clone(),
-            found: self.types.lookup(found).unwrap().clone(),
+            expect,
+            found,
         });
     }
 
@@ -194,13 +203,7 @@ impl SemanticAnalyzer {
                     ir_id: Some(ir_id),
                 }
             }
-            ExprKind::Logic(v) => {
-                let ir_id = self.emit_ir(ir::ExprKind::Logic(*v), self.builtin_types.t_logic);
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_logic,
-                    ir_id: Some(ir_id),
-                }
-            }
+            ExprKind::Logic(v) => self.handle_logic_expr(*v),
             ExprKind::Char(v) => {
                 let ir_id = self.emit_ir(ir::ExprKind::Char(*v), self.builtin_types.t_char);
                 AnalysisResult {
@@ -242,6 +245,73 @@ impl SemanticAnalyzer {
                 ir_id: None,
             },
             ExprKind::Member(expr) => self.handle_member_expr(expr),
+            ExprKind::Construct(expr) => self.handle_construct_expr(expr),
+        }
+    }
+
+    fn handle_logic_expr(&mut self, value: bool) -> AnalysisResult {
+        if value {
+            let ir_id = self.emit_ir(ir::ExprKind::Logic(value), self.builtin_types.t_logic);
+            AnalysisResult {
+                expr_type: self.builtin_types.t_logic,
+                ir_id: Some(ir_id),
+            }
+        } else {
+            let ir_id = self.emit_ir(ir::ExprKind::Logic(value), self.builtin_types.t_false);
+            AnalysisResult {
+                expr_type: self.builtin_types.t_false,
+                ir_id: Some(ir_id),
+            }
+        }
+    }
+
+    fn handle_decl_option(
+        &mut self,
+        name: Symbol,
+        ty: TypeId,
+        value: &Expression,
+        mutable: bool,
+    ) -> AnalysisResult {
+        let value_ar = self.handle_expr(value);
+        let ir = if value_ar.expr_type == self.builtin_types.t_false {
+            let none_ir = self.emit_ir(ir::ExprKind::Option(None), ty);
+            Some(self.emit_ir(
+                ir::ExprKind::Set(ir::SetExpr {
+                    target: name,
+                    value: none_ir,
+                }),
+                ty,
+            ))
+        } else if self.is_assignable_to(value_ar.expr_type, ty) {
+            value_ar.ir_id.map(|value_ir| {
+                self.emit_ir(
+                    ir::ExprKind::Set(ir::SetExpr {
+                        target: name,
+                        value: value_ir,
+                    }),
+                    ty,
+                )
+            })
+        } else {
+            self.errors.push(SemanticError::TypeMismatch {
+                span: value.span.clone(),
+                expect: ty,
+                found: value_ar.expr_type,
+            });
+            None
+        };
+
+        self.declare(
+            name,
+            Binding {
+                type_id: ty,
+                mutable,
+            },
+        );
+
+        AnalysisResult {
+            expr_type: ty,
+            ir_id: ir,
         }
     }
 
@@ -252,19 +322,24 @@ impl SemanticAnalyzer {
         value: &Expression,
         mutable: bool,
     ) -> AnalysisResult {
-        let ar = self.handle_expr(value);
-        let value_type = ar.expr_type;
-
-        let binding_type = if let Some(typ) = ty
+        let (ar, binding_type) = if let Some(typ) = ty
             && !matches!(typ.kind, TypeExprKind::Type)
         {
             let decl_type = self.handle_type_expr(typ);
+            if let TypeExprKind::Option(_) = typ.kind {
+                return self.handle_decl_option(name, decl_type, value, mutable);
+            }
+
+            let ar = self.handle_expr(value);
+            let value_type = ar.expr_type;
             if !self.is_assignable_to(value_type, decl_type) {
                 self.emit_type_mismatch_error(value.span.clone(), decl_type, value_type);
             }
-            decl_type
+            (ar, decl_type)
         } else {
-            value_type
+            let ar = self.handle_expr(value);
+            let value_type = ar.expr_type;
+            (ar, value_type)
         };
 
         self.declare(
@@ -717,6 +792,28 @@ impl SemanticAnalyzer {
             ir_id: None,
         }
     }
+
+    fn handle_construct_expr(&mut self, expr: &ConstructExpr) -> AnalysisResult {
+        if let ExprKind::Id(id_expr) = &expr.callee.kind {
+            if id_expr.symbol == self.builtin_symbols.s_option {
+                return self.handle_construct_option(&expr.arg);
+            }
+        }
+
+        todo!()
+    }
+
+    fn handle_construct_option(&mut self, arg: &Expression) -> AnalysisResult {
+        let arg_ar = self.handle_expr(arg);
+        let ty = self.types.intern(TypeInfo::Option(arg_ar.expr_type));
+        let ir = arg_ar
+            .ir_id
+            .map(|arg_ir| self.emit_ir(ir::ExprKind::Option(Some(arg_ir)), ty));
+        AnalysisResult {
+            expr_type: ty,
+            ir_id: ir,
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -727,8 +824,8 @@ pub enum SemanticError {
     #[error("{span:?} mismatched types")]
     TypeMismatch {
         span: Span,
-        expect: TypeInfo,
-        found: TypeInfo,
+        expect: TypeId,
+        found: TypeId,
     },
 
     #[error("{span:?} cannot resolve value {symbol:?}")]

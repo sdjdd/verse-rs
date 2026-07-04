@@ -162,6 +162,15 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
+        if self.consume_if(Token::Question) {
+            let start = self.span();
+            let type_expr = self.parse_type_expr()?;
+            return Ok(TypeExpr {
+                span: start.start..type_expr.span.end,
+                kind: TypeExprKind::Option(Box::new(type_expr)),
+            });
+        }
+
         self.expect(Token::Id)?;
         let start = self.span().start;
         match self.slice() {
@@ -509,7 +518,21 @@ impl<'src> Parser<'src> {
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::Id)?;
         let symbol = self.symbol_table.intern(self.slice());
-        Ok(self.make_expr(self.span(), IdExpr::new(symbol)))
+        let expr = self.make_expr(self.span(), IdExpr::new(symbol));
+
+        if self.consume_if(Token::LBrace) {
+            let arg = self.parse_expression()?;
+            self.expect(Token::RBrace)?;
+            return Ok(Expression {
+                span: expr.span.start..self.span().end,
+                kind: ExprKind::Construct(ConstructExpr {
+                    callee: Box::new(expr),
+                    arg: Box::new(arg),
+                }),
+            });
+        }
+
+        Ok(expr)
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {

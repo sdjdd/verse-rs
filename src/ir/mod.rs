@@ -24,6 +24,7 @@ pub enum ExprKind {
     Char32(char),
     String(ConstId),
     Logic(bool),
+    Option(Option<ExprId>),
     Call(CallExpr),
     GetTupleElem { tuple: ExprId, index: usize },
     Binary(BinaryExpr),
