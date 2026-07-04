@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use crate::{
     ast::{BinaryOperator, CompareOp},
     core::{ConstValue, Symbol},
-    ir,
+    ir::{self, ExprId},
     runtime::{
         CallContext, Failure, FunctionId, FunctionKind, TypeId, Value,
         builtin_funcs::{self, write_value},
-        heap::{Heap, HeapObj, SimpleHeap},
+        heap::{Heap, HeapObj, ObjectId, SimpleHeap},
     },
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
@@ -86,6 +86,13 @@ impl Evaluator {
         None
     }
 
+    fn fetch_string(&self, id: ObjectId) -> &str {
+        match self.heap.fetch_obj(id) {
+            HeapObj::String(s) => s.as_ref(),
+            _ => panic!("not a string"),
+        }
+    }
+
     pub fn eval(&mut self, expr: ir::ExprId) -> Result<Value, Failure> {
         let hir_expr = &self.irs[expr.0].clone();
 
@@ -113,7 +120,6 @@ impl Evaluator {
             ExprKind::Func(e) => self.eval_func_expr(e, hir_expr.id),
             ExprKind::Call(expr) => self.eval_call(expr),
             ExprKind::Cast { ty, value } => self.test_value_type(*value, *ty),
-            ExprKind::NoOp => Ok(Value::Void),
             ExprKind::GetTupleElem { tuple, index } => {
                 if let Value::Tuple { oid, .. } = self.eval(*tuple)? {
                     let elements = match self.heap.fetch_obj(oid) {
@@ -125,6 +131,7 @@ impl Evaluator {
                     panic!("GetTupleElem on a non-tuple value")
                 }
             }
+            ExprKind::GetLength(id) => self.eval_get_length(*id),
         }
     }
 
@@ -334,5 +341,16 @@ impl Evaluator {
         Ok(Value::Function {
             kind: FunctionKind::Verse(func_id),
         })
+    }
+
+    fn eval_get_length(&mut self, value_id: ExprId) -> Result<Value, Failure> {
+        let value = self.eval(value_id)?;
+        match value {
+            Value::String(oid) => {
+                let len = self.fetch_string(oid).len();
+                Ok(Value::Integer(len as i64))
+            }
+            _ => panic!("cannot get lenght of non string value"),
+        }
     }
 }

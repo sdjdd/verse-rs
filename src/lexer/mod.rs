@@ -33,6 +33,9 @@ pub enum Token {
     #[regex(r"\r?\n")]
     Newline,
 
+    #[token(".")]
+    Dot,
+
     #[token(":")]
     Colon,
 

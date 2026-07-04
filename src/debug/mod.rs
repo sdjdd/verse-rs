@@ -12,7 +12,7 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolT
             found,
         } => (
             span,
-            format!("type mismatched, expect: {:?}, found = {:?}", expect, found),
+            format!("type mismatched, expect: {:?}, found: {:?}", expect, found),
         ),
         SemanticError::TypeNotFound { span, symbol } => (
             span,

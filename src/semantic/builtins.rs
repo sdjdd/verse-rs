@@ -5,7 +5,6 @@ use crate::{
 
 #[allow(non_snake_case)]
 pub struct BuiltinSymbols {
-    // types
     pub(crate) s_int: Symbol,
     pub(crate) s_float: Symbol,
     pub(crate) s_char: Symbol,
@@ -15,9 +14,8 @@ pub struct BuiltinSymbols {
     pub(crate) s_void: Symbol,
     pub(crate) s_any: Symbol,
     pub(crate) s_tuple: Symbol,
-
-    // functions
     pub(crate) s_Print: Symbol,
+    pub(crate) s_Length: Symbol,
 }
 
 impl BuiltinSymbols {
@@ -42,8 +40,8 @@ impl BuiltinSymbols {
             s_void,
             s_any,
             s_tuple,
-
             s_Print: symbol_tbl.intern("Print"),
+            s_Length: symbol_tbl.intern("Length"),
         }
     }
 }

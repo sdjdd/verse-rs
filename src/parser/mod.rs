@@ -405,19 +405,9 @@ impl<'src> Parser<'src> {
         Ok(self.make_expr(start..end, BlockExpr::new(body)))
     }
 
-    fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
-        let expr = match self.peek() {
-            Token::Id => self.parse_identifier_expr()?,
-            Token::TemplateHead => self.parse_template_expression()?,
-            Token::LParen => self.parse_tuple_expr()?,
-            _ => self.parse_literal_expr()?,
-        };
-        Ok(expr)
-    }
-
     fn parse_call_expr(&mut self) -> ParseResult<Expression> {
         let pos = self.pos;
-        let mut callee = self.parse_primary_expr()?;
+        let mut callee = self.parse_lhs_expr()?;
 
         if let ExprKind::Id(id_expr) = &callee.kind
             && id_expr.symbol == self.builtin_symbols.s_tuple
@@ -487,6 +477,33 @@ impl<'src> Parser<'src> {
                 FunctionExpr::new(name, params, return_type, body),
             ))
         })
+    }
+
+    fn parse_lhs_expr(&mut self) -> ParseResult<Expression> {
+        let mut expr = self.parse_primary_expr()?;
+
+        while self.consume_if(Token::Dot) {
+            let id_expr = self.parse_identifier_expr()?;
+            expr = Expression {
+                span: expr.span.start..self.span().end,
+                kind: ExprKind::Member(MemberExpr {
+                    object: Box::new(expr),
+                    property: Box::new(id_expr),
+                }),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_primary_expr(&mut self) -> ParseResult<Expression> {
+        let expr = match self.peek() {
+            Token::Id => self.parse_identifier_expr()?,
+            Token::TemplateHead => self.parse_template_expression()?,
+            Token::LParen => self.parse_tuple_expr()?,
+            _ => self.parse_literal_expr()?,
+        };
+        Ok(expr)
     }
 
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {

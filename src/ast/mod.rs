@@ -32,6 +32,7 @@ pub enum ExprKind {
     Block(BlockExpr),
     Func(FunctionExpr),
     Type(TypeExpr),
+    Member(MemberExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -261,4 +262,10 @@ impl FunctionExpr {
             body: body.into(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MemberExpr {
+    pub object: Box<Expression>,
+    pub property: Box<Expression>,
 }

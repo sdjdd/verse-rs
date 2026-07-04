@@ -241,6 +241,7 @@ impl SemanticAnalyzer {
                 expr_type: self.handle_type_expr(e),
                 ir_id: None,
             },
+            ExprKind::Member(expr) => self.handle_member_expr(expr),
         }
     }
 
@@ -689,6 +690,31 @@ impl SemanticAnalyzer {
                     ir_id: None,
                 }
             }
+        }
+    }
+
+    fn handle_member_expr(&mut self, expr: &MemberExpr) -> AnalysisResult {
+        let obj_ar = self.handle_expr(&expr.object);
+
+        if let Some(obj_ir) = obj_ar.ir_id {
+            if obj_ar.expr_type == self.builtin_types.t_string {
+                if let ExprKind::Id(id_expr) = &expr.property.kind {
+                    if id_expr.symbol == self.builtin_symbols.s_Length {
+                        return AnalysisResult {
+                            expr_type: self.builtin_types.t_int,
+                            ir_id: Some(self.emit_ir(
+                                ir::ExprKind::GetLength(obj_ir),
+                                self.builtin_types.t_int,
+                            )),
+                        };
+                    }
+                }
+            }
+        }
+
+        AnalysisResult {
+            expr_type: self.builtin_types.t_any,
+            ir_id: None,
         }
     }
 }

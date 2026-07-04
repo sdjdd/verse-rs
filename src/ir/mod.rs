@@ -34,8 +34,9 @@ pub enum ExprKind {
     Block(Vec<ExprId>),
     Func(FunctionExpr),
     Type(TypeId),
-    NoOp,
+
     Cast { ty: TypeId, value: ExprId },
+    GetLength(ExprId),
 }
 
 #[derive(Debug, Clone)]
