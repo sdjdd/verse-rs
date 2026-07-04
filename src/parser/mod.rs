@@ -75,8 +75,15 @@ impl<'src> Parser<'src> {
         &self.source[self.span()]
     }
 
-    fn peek(&mut self) -> Token {
-        self.tokens.get(self.pos).map(|p| p.0).unwrap_or(Token::EOF)
+    fn peek_n(&self, n: usize) -> Token {
+        self.tokens
+            .get(self.pos + n)
+            .map(|p| p.0)
+            .unwrap_or(Token::EOF)
+    }
+
+    fn peek(&self) -> Token {
+        self.peek_n(0)
     }
 
     fn next(&mut self) -> Token {
