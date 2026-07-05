@@ -15,12 +15,12 @@ struct EvalScope {
     bindings: Vec<Value>,
 }
 
-pub struct Evaluator {
+pub struct Evaluator<THeap: Heap = SimpleHeap> {
     scopes: Vec<EvalScope>,
     functions: Vec<FunctionExpr>,
     builtin_types: PredefinedTypes,
     const_table: Vec<ConstValue>,
-    heap: Box<dyn Heap>,
+    heap: THeap,
 }
 
 impl Evaluator {
@@ -65,7 +65,7 @@ impl Evaluator {
             functions: vec![],
             builtin_types: pt,
             const_table,
-            heap: Box::new(SimpleHeap::new()),
+            heap: SimpleHeap::new(),
         }
     }
 
@@ -162,7 +162,7 @@ impl Evaluator {
                         expr.args.iter().map(|arg| self.eval(arg)).collect();
                     args.and_then(|args| {
                         let mut ctx = CallContext {
-                            heap: self.heap.as_ref(),
+                            heap: &self.heap,
                             args: &args,
                             ret_val: None,
                         };
@@ -255,7 +255,7 @@ impl Evaluator {
                 }
                 ir::TemplateElement::Expr(expr) => self.eval(expr).map(|v| {
                     let mut s = String::new();
-                    write_value(&mut s, self.heap.as_ref(), &v, false).unwrap();
+                    write_value(&mut s, &self.heap, &v, false).unwrap();
                     s
                 }),
             })
