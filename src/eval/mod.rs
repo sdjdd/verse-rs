@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-
 use crate::{
     ast::{BinaryOperator, CompareOp},
     core::ConstValue,
-    ir::{self, ExprId, Slot},
+    ir::{self, ExprKind, FunctionExpr, Ir, Slot},
     runtime::{
         CallContext, Failure, FunctionId, FunctionKind, TypeId, Value,
         builtin_funcs::{self, write_value},
@@ -22,9 +20,8 @@ struct EvalScope {
 
 pub struct Evaluator {
     scopes: Vec<EvalScope>,
-    functions: HashMap<FunctionId, ir::FunctionExpr>,
+    functions: Vec<FunctionExpr>,
     builtin_types: BuiltinTypes,
-    irs: Vec<ir::Ir>,
     const_table: Vec<ConstValue>,
     heap: Box<dyn Heap>,
 }
@@ -34,7 +31,6 @@ impl Evaluator {
         builtin_symbols: BuiltinSymbols,
         builtin_types: BuiltinTypes,
         const_table: Vec<ConstValue>,
-        irs: Vec<ir::Ir>,
         root_scope: &Scope,
     ) -> Self {
         let root_values = [
@@ -75,9 +71,8 @@ impl Evaluator {
 
         Self {
             scopes: vec![root_scope, EvalScope::default()],
-            functions: HashMap::new(),
+            functions: vec![],
             builtin_types: builtin_types,
-            irs,
             const_table,
             heap: Box::new(SimpleHeap::new()),
         }
@@ -106,11 +101,9 @@ impl Evaluator {
         }
     }
 
-    pub fn eval(&mut self, expr: ir::ExprId) -> Result<Value, Failure> {
-        let hir_expr = &self.irs[expr.0].clone();
-
-        use ir::ExprKind;
-        match &hir_expr.kind {
+    pub fn eval(&mut self, expr: &ir::Ir) -> Result<Value, Failure> {
+        match &expr.kind {
+            ExprKind::Nop => Ok(Value::Void),
             ExprKind::Int(value) => Ok(Value::Integer(*value)),
             ExprKind::Float(value) => Ok(Value::Float(*value)),
             ExprKind::Char(value) => Ok(Value::Char(*value)),
@@ -122,19 +115,19 @@ impl Evaluator {
             }
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
             ExprKind::Type(e) => Ok(Value::Type(*e)),
-            ExprKind::StoreLocal(expr) => self.eval_set(expr),
+            ExprKind::StoreLocal { slot, value } => self.eval_set(*slot, value),
             ExprKind::LoadUpvalue { depth, slot } => self.eval_get_local(*depth, *slot),
             ExprKind::Binary(expr) => self.eval_binary(expr),
             ExprKind::If(expr) => self.eval_if(expr),
             ExprKind::Template(expr) => self.eval_template(expr),
             ExprKind::CompareChain(expr) => self.eval_compare_chain(expr),
-            ExprKind::Tuple(e) => self.eval_tuple(e, hir_expr.ty),
+            ExprKind::Tuple(e) => self.eval_tuple(e, expr.ty),
             ExprKind::Block(expr) => self.eval_block(expr),
-            ExprKind::Func(e) => self.eval_func_expr(e, hir_expr.id),
+            ExprKind::Func(e) => self.eval_func_expr(e),
             ExprKind::Call(expr) => self.eval_call(expr),
-            ExprKind::Cast { ty, value } => self.test_value_type(*value, *ty),
+            ExprKind::Cast { ty, value } => self.test_value_type(value, *ty),
             ExprKind::GetTupleElem { tuple, index } => {
-                if let Value::Tuple { oid, .. } = self.eval(*tuple)? {
+                if let Value::Tuple { oid, .. } = self.eval(&tuple)? {
                     let elements = match self.heap.fetch_obj(oid) {
                         HeapObj::Vec(elems) => elems,
                         _ => panic!("tuple accidently refs a non-vec object"),
@@ -144,14 +137,14 @@ impl Evaluator {
                     panic!("GetTupleElem on a non-tuple value")
                 }
             }
-            ExprKind::GetLength(id) => self.eval_get_length(*id),
-            ExprKind::Option(id) => self.eval_option_value(*id),
+            ExprKind::GetLength(id) => self.eval_get_length(id),
+            ExprKind::Option(id) => self.eval_option_value(id.as_deref()),
         }
     }
 
-    fn eval_set(&mut self, expr: &ir::SetLocalIr) -> Result<Value, Failure> {
-        let value = self.eval(expr.value)?;
-        self.declare(expr.slot, value);
+    fn eval_set(&mut self, slot: Slot, value: &Ir) -> Result<Value, Failure> {
+        let value = self.eval(value)?;
+        self.declare(slot, value);
         Ok(value)
     }
 
@@ -160,7 +153,7 @@ impl Evaluator {
         Ok(value)
     }
 
-    fn eval_option_value(&mut self, expr_id: Option<ExprId>) -> Result<Value, Failure> {
+    fn eval_option_value(&mut self, expr_id: Option<&Ir>) -> Result<Value, Failure> {
         if let Some(id) = expr_id {
             let value = self.eval(id)?;
             let obj_id = self.heap.alloc_obj(HeapObj::Value(value));
@@ -171,11 +164,11 @@ impl Evaluator {
     }
 
     fn eval_call(&mut self, expr: &ir::CallExpr) -> Result<Value, Failure> {
-        match self.eval(expr.callee)? {
+        match self.eval(expr.callee.as_ref())? {
             Value::Function { kind } => match kind {
                 FunctionKind::Native(func) => {
                     let args: Result<Vec<_>, _> =
-                        expr.args.iter().map(|arg| self.eval(*arg)).collect();
+                        expr.args.iter().map(|arg| self.eval(arg)).collect();
                     args.and_then(|args| {
                         let mut ctx = CallContext {
                             heap: self.heap.as_ref(),
@@ -189,14 +182,14 @@ impl Evaluator {
                     })
                 }
                 FunctionKind::Verse(func_id) => {
-                    let func_expr = &self.functions[&func_id].clone();
+                    let func_expr = &self.functions[func_id.0].clone();
                     self.push_scope();
                     let val = (|| -> Result<Value, Failure> {
                         for (param, arg) in func_expr.params.iter().zip(expr.args.iter()) {
-                            let arg = self.eval(*arg)?;
+                            let arg = self.eval(arg)?;
                             self.declare(*param, arg);
                         }
-                        let ret_val = self.eval(func_expr.body)?;
+                        let ret_val = self.eval(func_expr.body.as_ref())?;
                         Ok(if func_expr.return_void {
                             Value::Void
                         } else {
@@ -211,7 +204,7 @@ impl Evaluator {
         }
     }
 
-    fn test_value_type(&mut self, value: ir::ExprId, type_id: TypeId) -> Result<Value, Failure> {
+    fn test_value_type(&mut self, value: &Ir, type_id: TypeId) -> Result<Value, Failure> {
         let value = self.eval(value)?;
         let ok = match &value {
             Value::Integer(_) => type_id == self.builtin_types.t_int,
@@ -222,8 +215,8 @@ impl Evaluator {
     }
 
     fn eval_binary(&mut self, expr: &ir::BinaryExpr) -> Result<Value, Failure> {
-        let left = self.eval(expr.lhs)?;
-        let right = self.eval(expr.rhs)?;
+        let left = self.eval(&expr.lhs)?;
+        let right = self.eval(&expr.rhs)?;
         match (left, right) {
             (left, right) => {
                 let value = match expr.op {
@@ -243,18 +236,18 @@ impl Evaluator {
     }
 
     fn eval_if(&mut self, expr: &ir::IfExpr) -> Result<Value, Failure> {
-        if let Ok(test) = self.eval(expr.test) {
+        if let Ok(test) = self.eval(&expr.test) {
             if !matches!(test, Value::Logic(false)) {
-                self.eval(expr.then)
+                self.eval(&expr.then)
             } else if let Some(alternate) = &expr.alt {
-                self.eval(*alternate)
+                self.eval(alternate)
             } else {
                 Ok(Value::Void)
             }
         } else {
             if let Some(alternate) = &expr.alt {
                 // TODO: optional
-                self.eval(*alternate)
+                self.eval(alternate)
             } else {
                 Err(Failure())
             }
@@ -269,7 +262,7 @@ impl Evaluator {
                     let ConstValue::String(s) = &self.const_table[const_id.0];
                     Ok(s.clone())
                 }
-                ir::TemplateElement::Expr(expr) => self.eval(*expr).map(|v| {
+                ir::TemplateElement::Expr(expr) => self.eval(expr).map(|v| {
                     let mut s = String::new();
                     write_value(&mut s, self.heap.as_ref(), &v, false).unwrap();
                     s
@@ -283,11 +276,11 @@ impl Evaluator {
     }
 
     fn eval_compare_chain(&mut self, expr: &ir::CompareChainExpr) -> Result<Value, Failure> {
-        let leftmost = self.eval(expr.head)?;
+        let leftmost = self.eval(&expr.head)?;
         let mut prev = leftmost;
 
         for (op, expr) in &expr.rest {
-            let current = self.eval(*expr)?;
+            let current = self.eval(expr)?;
 
             match op {
                 CompareOp::Eq => {
@@ -328,17 +321,17 @@ impl Evaluator {
         Ok(leftmost)
     }
 
-    fn eval_tuple(&mut self, elements: &[ir::ExprId], ty: TypeId) -> Result<Value, Failure> {
-        let elems: Result<Vec<_>, _> = elements.iter().map(|el| self.eval(*el)).collect();
+    fn eval_tuple(&mut self, elements: &[Ir], ty: TypeId) -> Result<Value, Failure> {
+        let elems: Result<Vec<_>, _> = elements.iter().map(|el| self.eval(el)).collect();
         let elems = elems?;
         let oid = self.heap.alloc_obj(HeapObj::Vec(elems));
         Ok(Value::Tuple { ty, oid })
     }
 
-    fn eval_block(&mut self, expr_ids: &[ir::ExprId]) -> Result<Value, Failure> {
+    fn eval_block(&mut self, expr_ids: &[Ir]) -> Result<Value, Failure> {
         let mut result = Ok(Value::Void);
         for expr in expr_ids {
-            result = self.eval(*expr);
+            result = self.eval(expr);
             if result.is_err() {
                 break;
             }
@@ -346,26 +339,22 @@ impl Evaluator {
         result
     }
 
-    fn eval_func_expr(
-        &mut self,
-        expr: &ir::FunctionExpr,
-        expr_id: ir::ExprId,
-    ) -> Result<Value, Failure> {
-        let func_id = FunctionId(expr_id.0);
+    fn eval_func_expr(&mut self, expr: &ir::FunctionExpr) -> Result<Value, Failure> {
+        let id = FunctionId(self.functions.len());
+        self.functions.push(expr.clone());
         self.declare(
             expr.slot,
             Value::Function {
-                kind: FunctionKind::Verse(func_id),
+                kind: FunctionKind::Verse(id),
             },
         );
-        self.functions.insert(func_id, expr.clone());
         Ok(Value::Function {
-            kind: FunctionKind::Verse(func_id),
+            kind: FunctionKind::Verse(id),
         })
     }
 
-    fn eval_get_length(&mut self, value_id: ExprId) -> Result<Value, Failure> {
-        let value = self.eval(value_id)?;
+    fn eval_get_length(&mut self, value: &Ir) -> Result<Value, Failure> {
+        let value = self.eval(value)?;
         match value {
             Value::String(oid) => {
                 let len = self.fetch_string(oid).len();

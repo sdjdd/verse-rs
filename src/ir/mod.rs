@@ -4,87 +4,84 @@ use crate::{
     runtime::TypeId,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ExprId(pub usize);
-
 #[derive(Debug, Clone, Copy)]
 pub struct Slot(pub usize);
 
 #[derive(Debug, Clone)]
 pub struct Ir {
-    pub id: ExprId,
     pub kind: ExprKind,
     pub ty: TypeId,
 }
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
+    Nop,
     LoadUpvalue { depth: usize, slot: Slot },
-    StoreLocal(SetLocalIr),
+    StoreLocal { slot: Slot, value: Box<Ir> },
     Int(i64),
     Float(f64),
     Char(u8),
     Char32(char),
     String(ConstId),
     Logic(bool),
-    Option(Option<ExprId>),
+    Option(Option<Box<Ir>>),
     Call(CallExpr),
-    GetTupleElem { tuple: ExprId, index: usize },
+    GetTupleElem { tuple: Box<Ir>, index: usize },
     Binary(BinaryExpr),
     If(IfExpr),
     Template(Vec<TemplateElement>),
     CompareChain(CompareChainExpr),
-    Tuple(Vec<ExprId>),
-    Block(Vec<ExprId>),
+    Tuple(Vec<Ir>),
+    Block(Vec<Ir>),
     Func(FunctionExpr),
     Type(TypeId),
 
-    Cast { ty: TypeId, value: ExprId },
-    GetLength(ExprId),
+    Cast { ty: TypeId, value: Box<Ir> },
+    GetLength(Box<Ir>),
 }
 
 #[derive(Debug, Clone)]
-pub struct SetLocalIr {
+pub struct StoreLocalIr {
     pub slot: Slot,
-    pub value: ExprId,
+    pub value: Box<Ir>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CallExpr {
-    pub callee: ExprId,
-    pub args: Vec<ExprId>,
+    pub callee: Box<Ir>,
+    pub args: Vec<Ir>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BinaryExpr {
-    pub lhs: ExprId,
+    pub lhs: Box<Ir>,
     pub op: BinaryOperator,
-    pub rhs: ExprId,
+    pub rhs: Box<Ir>,
 }
 
 #[derive(Debug, Clone)]
 pub struct IfExpr {
-    pub test: ExprId,
-    pub then: ExprId,
-    pub alt: Option<ExprId>,
+    pub test: Box<Ir>,
+    pub then: Box<Ir>,
+    pub alt: Option<Box<Ir>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum TemplateElement {
     String(ConstId),
-    Expr(ExprId),
+    Expr(Box<Ir>),
 }
 
 #[derive(Debug, Clone)]
 pub struct CompareChainExpr {
-    pub head: ExprId,
-    pub rest: Vec<(CompareOp, ExprId)>,
+    pub head: Box<Ir>,
+    pub rest: Vec<(CompareOp, Ir)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionExpr {
     pub slot: Slot,
     pub params: Vec<Slot>,
-    pub body: ExprId,
+    pub body: Box<Ir>,
     pub return_void: bool,
 }

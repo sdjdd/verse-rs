@@ -56,45 +56,52 @@ impl TypeRegistry {
 
 #[derive(Clone, Copy)]
 pub struct Binding {
+    slot: Slot,
     pub type_id: TypeId,
     pub mutable: bool,
 }
 
-#[derive(Default)]
 pub struct Scope {
-    bindings: Vec<Binding>,
-    slot_pool: HashMap<Symbol, Slot>,
+    own_slots: bool,
+    next_slot: usize,
+    slot_pool: HashMap<Symbol, Binding>,
 }
 
 impl Scope {
-    fn declare(&mut self, symbol: Symbol, binding: Binding) -> Slot {
-        if let Some(slot) = self.slot_pool.get(&symbol) {
-            self.bindings[slot.0] = binding;
-            return *slot;
+    fn new(next_slot: usize) -> Self {
+        Self {
+            own_slots: next_slot == 0,
+            next_slot,
+            slot_pool: HashMap::new(),
         }
-        let slot = Slot(self.bindings.len());
-        self.slot_pool.insert(symbol, slot);
-        self.bindings.push(binding);
+    }
+
+    fn declare(&mut self, symbol: Symbol, ty: TypeId, mutable: bool) -> Slot {
+        if let Some(binding) = self.slot_pool.get_mut(&symbol) {
+            binding.type_id = ty;
+            binding.mutable = mutable;
+            return binding.slot;
+        }
+        let slot = Slot(self.next_slot);
+        self.next_slot += 1;
+        self.slot_pool.insert(
+            symbol,
+            Binding {
+                slot,
+                type_id: ty,
+                mutable,
+            },
+        );
         slot
     }
 
     fn lookup(&self, symbol: Symbol) -> Option<&Binding> {
-        if let Some(slot) = self.slot_pool.get(&symbol) {
-            Some(&self.bindings[slot.0])
-        } else {
-            None
-        }
+        self.slot_pool.get(&symbol)
     }
 
     pub fn lookup_slot(&self, symbol: Symbol) -> Slot {
-        self.slot_pool.get(&symbol).copied().unwrap()
+        self.slot_pool.get(&symbol).unwrap().slot
     }
-}
-
-#[derive(Clone, Copy)]
-pub struct AnalysisResult {
-    pub expr_type: TypeId,
-    pub ir_id: Option<ir::ExprId>,
 }
 
 pub struct SemanticAnalyzer {
@@ -109,31 +116,19 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new(symbol_table: &mut SymbolTable) -> Self {
-        let mut root_scope = Scope::default();
+        let mut root_scope = Scope::new(0);
         let mut types = TypeRegistry::default();
 
         let bs = BuiltinSymbols::install(symbol_table);
         let bt = BuiltinTypes::install(&mut types);
 
         for (symbol, type_id) in bt.pairs(&bs) {
-            root_scope.declare(
-                symbol,
-                Binding {
-                    type_id: types.intern(TypeInfo::Type(type_id)),
-                    mutable: false,
-                },
-            );
+            root_scope.declare(symbol, types.intern(TypeInfo::Type(type_id)), false);
         }
-        root_scope.declare(
-            bs.s_Print,
-            Binding {
-                type_id: types.intern(TypeInfo::Any),
-                mutable: false,
-            },
-        );
+        root_scope.declare(bs.s_Print, types.intern(TypeInfo::Any), false);
 
         Self {
-            scopes: vec![root_scope, Scope::default()],
+            scopes: vec![root_scope, Scope::new(0)],
             builtin_symbols: bs,
             builtin_types: bt,
             errors: vec![],
@@ -142,17 +137,30 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn push_scope(&mut self) {
-        self.scopes.push(Scope::default());
+    fn push_scope(&mut self, own_slots: bool) {
+        let scope = if own_slots {
+            Scope::new(0)
+        } else {
+            let next_slot = self.scopes.last().unwrap().next_slot;
+            Scope::new(next_slot)
+        };
+        self.scopes.push(scope);
     }
 
     fn pop_scope(&mut self) {
-        self.scopes.pop();
+        if self.scopes.len() == 1 {
+            // preserve root scope
+            return;
+        }
+        let scope = self.scopes.pop().unwrap();
+        if !scope.own_slots {
+            self.scopes.last_mut().unwrap().next_slot = scope.next_slot;
+        }
     }
 
-    pub fn declare(&mut self, symbol: Symbol, binding: Binding) -> Slot {
+    pub fn declare(&mut self, symbol: Symbol, ty: TypeId, mutable: bool) -> Slot {
         // TODO: check shadowing
-        self.scopes.last_mut().unwrap().declare(symbol, binding)
+        self.scopes.last_mut().unwrap().declare(symbol, ty, mutable)
     }
 
     fn get_slot(&self, symbol: Symbol) -> Slot {
@@ -160,12 +168,14 @@ impl SemanticAnalyzer {
     }
 
     fn lookup_slot(&self, symbol: Symbol) -> (usize, Slot) {
-        let mut parent = 0;
+        let mut depth = 0;
         for scope in self.scopes.iter().rev() {
-            if let Some(slot) = scope.slot_pool.get(&symbol) {
-                return (parent, *slot);
+            if scope.own_slots {
+                if let Some(binding) = scope.slot_pool.get(&symbol) {
+                    return (depth, binding.slot);
+                }
+                depth += 1;
             }
-            parent += 1;
         }
         panic!()
     }
@@ -204,62 +214,37 @@ impl SemanticAnalyzer {
         });
     }
 
-    fn emit_ir(&mut self, kind: ir::ExprKind, ty: TypeId) -> ir::ExprId {
-        let id = ir::ExprId(self.irs.len());
-        self.irs.push(Ir { id, kind, ty });
-        id
-    }
-
-    pub fn analyze(&mut self, program: &[Expression]) -> Vec<ir::ExprId> {
+    pub fn analyze(&mut self, program: &[Expression]) -> Vec<Ir> {
         let mut root_irs = vec![];
         for expr in program {
-            let ar = self.handle_expr(expr);
-            if let Some(ir) = ar.ir_id {
-                root_irs.push(ir);
-            }
+            root_irs.push(self.handle_expr(expr));
         }
         root_irs
     }
 
-    pub fn handle_expr(&mut self, expr: &Expression) -> AnalysisResult {
+    pub fn handle_expr(&mut self, expr: &Expression) -> Ir {
         match &expr.kind {
-            ExprKind::Integer(v) => {
-                let ir_id = self.emit_ir(ir::ExprKind::Int(*v), self.builtin_types.t_int);
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_int,
-                    ir_id: Some(ir_id),
-                }
-            }
-            ExprKind::Float(v) => {
-                let ir_id = self.emit_ir(ir::ExprKind::Float(*v), self.builtin_types.t_float);
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_float,
-                    ir_id: Some(ir_id),
-                }
-            }
+            ExprKind::Integer(v) => Ir {
+                kind: ir::ExprKind::Int(*v),
+                ty: self.builtin_types.t_int,
+            },
+            ExprKind::Float(v) => Ir {
+                kind: ir::ExprKind::Float(*v),
+                ty: self.builtin_types.t_float,
+            },
             ExprKind::Logic(v) => self.handle_logic_expr(*v),
-            ExprKind::Char(v) => {
-                let ir_id = self.emit_ir(ir::ExprKind::Char(*v), self.builtin_types.t_char);
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_char,
-                    ir_id: Some(ir_id),
-                }
-            }
-            ExprKind::Char32(v) => {
-                let ir_id = self.emit_ir(ir::ExprKind::Char32(*v), self.builtin_types.t_char32);
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_char32,
-                    ir_id: Some(ir_id),
-                }
-            }
-            ExprKind::String(v) => {
-                let ir_id =
-                    self.emit_ir(ir::ExprKind::String(v.clone()), self.builtin_types.t_string);
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_string,
-                    ir_id: Some(ir_id),
-                }
-            }
+            ExprKind::Char(v) => Ir {
+                kind: ir::ExprKind::Char(*v),
+                ty: self.builtin_types.t_char,
+            },
+            ExprKind::Char32(v) => Ir {
+                kind: ir::ExprKind::Char32(*v),
+                ty: self.builtin_types.t_char32,
+            },
+            ExprKind::String(v) => Ir {
+                kind: ir::ExprKind::String(*v),
+                ty: self.builtin_types.t_string,
+            },
             ExprKind::Decl(e) => self.handle_decl_expr(e.target, e.typ.as_ref(), &e.value, false),
             ExprKind::VarDecl(e) => {
                 self.handle_decl_expr(e.name.symbol, Some(&e.typ), &e.expr, true)
@@ -274,27 +259,35 @@ impl SemanticAnalyzer {
             ExprKind::Func(e) => self.handle_func_expr(e),
             ExprKind::Call(e) => self.handle_call_expr(expr.span.clone(), e),
             ExprKind::Binary(e) => self.handle_binary_expr(expr.span.clone(), e),
-            ExprKind::Type(e) => AnalysisResult {
-                expr_type: self.handle_type_expr(e),
-                ir_id: None,
-            },
+            ExprKind::Type(e) => {
+                let type_id = self.handle_type_expr(e);
+                Ir {
+                    kind: ir::ExprKind::Type(type_id),
+                    ty: type_id,
+                }
+            }
             ExprKind::Member(expr) => self.handle_member_expr(expr),
             ExprKind::Construct(expr) => self.handle_construct_expr(expr),
         }
     }
 
-    fn handle_logic_expr(&mut self, value: bool) -> AnalysisResult {
+    fn placeholder_ir(&self) -> Ir {
+        Ir {
+            kind: ir::ExprKind::Nop,
+            ty: self.builtin_types.t_any,
+        }
+    }
+
+    fn handle_logic_expr(&mut self, value: bool) -> Ir {
         if value {
-            let ir_id = self.emit_ir(ir::ExprKind::Logic(value), self.builtin_types.t_logic);
-            AnalysisResult {
-                expr_type: self.builtin_types.t_logic,
-                ir_id: Some(ir_id),
+            Ir {
+                kind: ir::ExprKind::Logic(value),
+                ty: self.builtin_types.t_logic,
             }
         } else {
-            let ir_id = self.emit_ir(ir::ExprKind::Logic(value), self.builtin_types.t_false);
-            AnalysisResult {
-                expr_type: self.builtin_types.t_false,
-                ir_id: Some(ir_id),
+            Ir {
+                kind: ir::ExprKind::Logic(value),
+                ty: self.builtin_types.t_false,
             }
         }
     }
@@ -305,48 +298,37 @@ impl SemanticAnalyzer {
         ty: TypeId,
         value: &Expression,
         mutable: bool,
-    ) -> AnalysisResult {
-        let value_ar = self.handle_expr(value);
+    ) -> Ir {
+        let value_ir = self.handle_expr(value);
 
-        self.declare(
-            name,
-            Binding {
-                type_id: ty,
-                mutable,
-            },
-        );
+        self.declare(name, ty, mutable);
 
-        let ir = if value_ar.expr_type == self.builtin_types.t_false {
-            let none_ir = self.emit_ir(ir::ExprKind::Option(None), ty);
-            Some(self.emit_ir(
-                ir::ExprKind::StoreLocal(ir::SetLocalIr {
+        if value_ir.ty == self.builtin_types.t_false {
+            Ir {
+                kind: ir::ExprKind::StoreLocal {
                     slot: self.get_slot(name),
-                    value: none_ir,
-                }),
-                ty,
-            ))
-        } else if self.is_assignable_to(value_ar.expr_type, ty) {
-            value_ar.ir_id.map(|value_ir| {
-                self.emit_ir(
-                    ir::ExprKind::StoreLocal(ir::SetLocalIr {
-                        slot: self.get_slot(name),
-                        value: value_ir,
+                    value: Box::new(Ir {
+                        kind: ir::ExprKind::Option(None),
+                        ty,
                     }),
-                    ty,
-                )
-            })
+                },
+                ty,
+            }
+        } else if self.is_assignable_to(value_ir.ty, ty) {
+            Ir {
+                kind: ir::ExprKind::StoreLocal {
+                    slot: self.get_slot(name),
+                    value: Box::new(value_ir),
+                },
+                ty,
+            }
         } else {
             self.errors.push(SemanticError::TypeMismatch {
                 span: value.span.clone(),
                 expect: ty,
-                found: value_ar.expr_type,
+                found: value_ir.ty,
             });
-            None
-        };
-
-        AnalysisResult {
-            expr_type: ty,
-            ir_id: ir,
+            self.placeholder_ir()
         }
     }
 
@@ -356,8 +338,8 @@ impl SemanticAnalyzer {
         ty: Option<&TypeExpr>,
         value: &Expression,
         mutable: bool,
-    ) -> AnalysisResult {
-        let (ar, binding_type) = if let Some(typ) = ty
+    ) -> Ir {
+        let (value_ir, binding_type) = if let Some(typ) = ty
             && !matches!(typ.kind, TypeExprKind::Type)
         {
             let decl_type = self.handle_type_expr(typ);
@@ -365,43 +347,31 @@ impl SemanticAnalyzer {
                 return self.handle_decl_option(name, decl_type, value, mutable);
             }
 
-            let ar = self.handle_expr(value);
-            let value_type = ar.expr_type;
-            if !self.is_assignable_to(value_type, decl_type) {
-                self.emit_type_mismatch_error(value.span.clone(), decl_type, value_type);
+            let value_ir = self.handle_expr(value);
+            if !self.is_assignable_to(value_ir.ty, decl_type) {
+                self.emit_type_mismatch_error(value.span.clone(), decl_type, value_ir.ty);
             }
-            (ar, decl_type)
+            (value_ir, decl_type)
         } else {
-            let ar = self.handle_expr(value);
-            let value_type = ar.expr_type;
-            (ar, value_type)
+            let value_ir = self.handle_expr(value);
+            let value_ty = value_ir.ty;
+            (value_ir, value_ty)
         };
 
-        let slot = self.declare(
-            name,
-            Binding {
-                type_id: binding_type,
-                mutable,
-            },
-        );
+        let slot = self.declare(name, binding_type, mutable);
 
-        AnalysisResult {
-            expr_type: binding_type,
-            ir_id: ar.ir_id.map(|value_ir| {
-                self.emit_ir(
-                    ir::ExprKind::StoreLocal(ir::SetLocalIr {
-                        slot,
-                        value: value_ir,
-                    }),
-                    binding_type,
-                )
-            }),
+        Ir {
+            kind: ir::ExprKind::StoreLocal {
+                slot,
+                value: Box::new(value_ir),
+            },
+            ty: binding_type,
         }
     }
 
-    fn handle_set_expr(&mut self, expr: &SetExpr) -> AnalysisResult {
-        let ar = self.handle_expr(&expr.expr);
-        let value_type = ar.expr_type;
+    fn handle_set_expr(&mut self, expr: &SetExpr) -> Ir {
+        let value_ir = self.handle_expr(&expr.expr);
+        let value_type = value_ir.ty;
         let mut type_id = value_type;
 
         let name = match &expr.target.kind {
@@ -426,189 +396,145 @@ impl SemanticAnalyzer {
             }
         };
 
-        AnalysisResult {
-            expr_type: type_id,
-            ir_id: ar.ir_id.map(|value_ir| {
-                self.emit_ir(
-                    ir::ExprKind::StoreLocal(ir::SetLocalIr {
-                        slot: self.get_slot(name),
-                        value: value_ir,
-                    }),
-                    type_id,
-                )
-            }),
+        Ir {
+            kind: ir::ExprKind::StoreLocal {
+                slot: self.get_slot(name),
+                value: Box::new(value_ir),
+            },
+            ty: type_id,
         }
     }
 
-    fn handle_id_expr(&mut self, span: Span, expr: &IdExpr) -> AnalysisResult {
-        let (type_id, ir) = if let Some(binding) = self.lookup(&expr.symbol).cloned() {
+    fn handle_id_expr(&mut self, span: Span, expr: &IdExpr) -> Ir {
+        if let Some(binding) = self.lookup(&expr.symbol).cloned() {
             let (depth, slot) = self.lookup_slot(expr.symbol);
-            let ir = self.emit_ir(ir::ExprKind::LoadUpvalue { depth, slot }, binding.type_id);
-            (binding.type_id, Some(ir))
+            Ir {
+                kind: ir::ExprKind::LoadUpvalue { depth, slot },
+                ty: binding.type_id,
+            }
         } else {
             self.errors.push(SemanticError::Reference {
                 span,
                 symbol: expr.symbol,
             });
-            (self.builtin_types.t_any, None)
-        };
-
-        AnalysisResult {
-            expr_type: type_id,
-            ir_id: ir,
+            self.placeholder_ir()
         }
     }
 
-    fn handle_block_expr(&mut self, expr: &BlockExpr) -> AnalysisResult {
-        let body_ars: Vec<_> = expr
+    fn handle_block_expr(&mut self, expr: &BlockExpr) -> Ir {
+        let body: Vec<_> = expr
             .body
             .iter()
             .map(|expr| self.handle_expr(expr))
             .collect();
 
-        let type_id = body_ars
+        let type_id = body
             .last()
-            .map(|ar| ar.expr_type)
+            .map(|ar| ar.ty)
             .unwrap_or(self.builtin_types.t_void);
 
-        let body_irs = body_ars.iter().map(|ar| ar.ir_id).flatten().collect();
-
-        let ir = self.emit_ir(ir::ExprKind::Block(body_irs), type_id);
-
-        AnalysisResult {
-            expr_type: type_id,
-            ir_id: Some(ir),
+        Ir {
+            kind: ir::ExprKind::Block(body),
+            ty: type_id,
         }
     }
 
-    fn handle_compare_chain_expr(&mut self, expr: &CompareChainExpr) -> AnalysisResult {
+    fn handle_compare_chain_expr(&mut self, expr: &CompareChainExpr) -> Ir {
         // TODO: check if items are comparable
         // Currently just check if they are the same type
 
         let head_ar = self.handle_expr(&expr.head);
-        let head_type = head_ar.expr_type;
+        let head_type = head_ar.ty;
 
-        let mut rest_hir_ids = vec![];
+        let mut rest_irs = vec![];
         for (_, expr) in &expr.rest {
-            let ar = self.handle_expr(expr);
-            if let Some(ir) = ar.ir_id {
-                rest_hir_ids.push(ir);
+            let ir = self.handle_expr(expr);
+            if ir.ty != head_type {
+                self.emit_type_mismatch_error(expr.span.clone(), head_type, ir.ty);
             }
-            if ar.expr_type != head_type {
-                self.emit_type_mismatch_error(expr.span.clone(), head_type, ar.expr_type);
-            }
+            rest_irs.push(ir);
         }
 
-        let ir = if let Some(head_ir) = head_ar.ir_id
-            && rest_hir_ids.len() == expr.rest.len()
-        {
-            let ir = self.emit_ir(
-                ir::ExprKind::CompareChain(ir::CompareChainExpr {
-                    head: head_ir,
-                    rest: rest_hir_ids
-                        .iter()
-                        .zip(expr.rest.iter())
-                        .map(|(&a, b)| (b.0, a))
-                        .collect(),
-                }),
-                head_type,
-            );
-            Some(ir)
-        } else {
-            None
-        };
-
-        AnalysisResult {
-            expr_type: head_type,
-            ir_id: ir,
+        Ir {
+            kind: ir::ExprKind::CompareChain(ir::CompareChainExpr {
+                head: head_ar.into(),
+                rest: rest_irs
+                    .into_iter()
+                    .zip(expr.rest.iter())
+                    .map(|(ir, (op, _))| (*op, ir))
+                    .collect(),
+            }),
+            ty: head_type,
         }
     }
 
-    fn handle_template_expr(&mut self, expr: &TemplateExpression) -> AnalysisResult {
-        let element_irs: Option<Vec<_>> = expr
+    fn handle_template_expr(&mut self, expr: &TemplateExpression) -> Ir {
+        let elements: Vec<_> = expr
             .elements
             .iter()
             .map(|el| match el {
-                TemplateElement::Expr(expr) => self
-                    .handle_expr(expr)
-                    .ir_id
-                    .map(|ir| ir::TemplateElement::Expr(ir)),
-                TemplateElement::Raw(const_id) => Some(ir::TemplateElement::String(*const_id)),
+                TemplateElement::Expr(expr) => {
+                    ir::TemplateElement::Expr(self.handle_expr(expr).into())
+                }
+                TemplateElement::Raw(const_id) => ir::TemplateElement::String(*const_id),
             })
             .collect();
 
-        AnalysisResult {
-            expr_type: self.builtin_types.t_string,
-            ir_id: element_irs
-                .map(|irs| self.emit_ir(ir::ExprKind::Template(irs), self.builtin_types.t_string)),
+        Ir {
+            kind: ir::ExprKind::Template(elements),
+            ty: self.builtin_types.t_string,
         }
     }
 
-    fn handle_tuple_expr(&mut self, expr: &TupleExpr) -> AnalysisResult {
+    fn handle_tuple_expr(&mut self, expr: &TupleExpr) -> Ir {
         let (elem_types, elem_irs): (Vec<_>, Vec<_>) = expr
             .elements
             .iter()
             .map(|el| {
-                let ar = self.handle_expr(el);
-                (ar.expr_type, ar.ir_id)
+                let ir = self.handle_expr(el);
+                (ir.ty, ir)
             })
             .unzip();
 
         let type_id = self.types.intern(TypeInfo::Tuple(elem_types));
 
-        AnalysisResult {
-            expr_type: type_id,
-            ir_id: if elem_irs.iter().any(|e| e.is_none()) {
-                None
-            } else {
-                Some(self.emit_ir(
-                    ir::ExprKind::Tuple(elem_irs.into_iter().flatten().collect()),
-                    type_id,
-                ))
-            },
+        Ir {
+            kind: ir::ExprKind::Tuple(elem_irs),
+            ty: type_id,
         }
     }
 
-    fn handle_if_expr(&mut self, expr: &IfExpr) -> AnalysisResult {
-        self.push_scope();
-        let test_ar = self.handle_expr(&expr.test);
-        let then_ar = self.handle_expr(&expr.consequent);
+    fn handle_if_expr(&mut self, expr: &IfExpr) -> Ir {
+        self.push_scope(false);
+        let test_ir = self.handle_expr(&expr.test);
+        let then_ir = self.handle_expr(&expr.consequent);
         self.pop_scope();
 
-        let then_type = then_ar.expr_type;
-
         let (expr_type, alt_ar) = if let Some(alt) = &expr.alternate {
-            self.push_scope();
-            let ar = self.handle_expr(alt);
+            self.push_scope(false);
+            let alt_ir = self.handle_expr(alt);
             self.pop_scope();
-            let expr_type = if then_type != ar.expr_type {
+            let expr_type = if then_ir.ty != alt_ir.ty {
                 self.builtin_types.t_any
             } else {
-                then_type
+                then_ir.ty
             };
-            (expr_type, Some(ar))
+            (expr_type, Some(alt_ir))
         } else {
-            (self.types.intern(TypeInfo::Option(then_type)), None)
+            (self.types.intern(TypeInfo::Option(then_ir.ty)), None)
         };
 
-        AnalysisResult {
-            expr_type,
-            ir_id: if let (Some(test_ir), Some(then_ir)) = (test_ar.ir_id, then_ar.ir_id) {
-                Some(self.emit_ir(
-                    ir::ExprKind::If(ir::IfExpr {
-                        test: test_ir,
-                        then: then_ir,
-                        alt: alt_ar.map(|ar| ar.ir_id).flatten(),
-                    }),
-                    expr_type,
-                ))
-            } else {
-                None
-            },
+        Ir {
+            kind: ir::ExprKind::If(ir::IfExpr {
+                test: test_ir.into(),
+                then: then_ir.into(),
+                alt: alt_ar.map(|ar| ar.into()),
+            }),
+            ty: expr_type,
         }
     }
 
-    fn handle_func_expr(&mut self, expr: &FunctionExpr) -> AnalysisResult {
+    fn handle_func_expr(&mut self, expr: &FunctionExpr) -> Ir {
         let return_type = self.handle_type_expr(&expr.return_type);
         let param_names: Vec<_> = expr.params.iter().map(|p| p.name).collect();
         let param_types: Vec<_> = expr
@@ -617,25 +543,16 @@ impl SemanticAnalyzer {
             .map(|p| self.handle_type_expr(&p.typ))
             .collect();
 
+        self.push_scope(true);
         for (param_name, param_type) in param_names.iter().zip(param_types.iter()) {
-            self.declare(
-                *param_name,
-                Binding {
-                    type_id: *param_type,
-                    mutable: true,
-                },
-            );
+            self.declare(*param_name, *param_type, true);
         }
 
-        let body_ar = self.handle_expr(&expr.body);
+        let body = self.handle_expr(&expr.body);
 
         if return_type != self.builtin_types.t_void {
-            if body_ar.expr_type != return_type {
-                self.emit_type_mismatch_error(
-                    expr.body.span.clone(),
-                    return_type,
-                    body_ar.expr_type,
-                );
+            if body.ty != return_type {
+                self.emit_type_mismatch_error(expr.body.span.clone(), return_type, body.ty);
             }
         }
 
@@ -644,149 +561,103 @@ impl SemanticAnalyzer {
             ret: return_type,
         });
 
-        self.declare(
-            expr.name,
-            Binding {
-                type_id,
-                mutable: false,
-            },
-        );
+        let param_slots = param_names
+            .iter()
+            .map(|name| self.get_slot(*name))
+            .collect();
 
-        AnalysisResult {
-            expr_type: type_id,
-            ir_id: body_ar.ir_id.map(|body_ir| {
-                self.emit_ir(
-                    ir::ExprKind::Func(ir::FunctionExpr {
-                        slot: self.get_slot(expr.name),
-                        params: param_names
-                            .iter()
-                            .map(|name| self.get_slot(*name))
-                            .collect(),
-                        body: body_ir,
-                        return_void: return_type == self.builtin_types.t_void,
-                    }),
-                    type_id,
-                )
+        self.pop_scope();
+
+        self.declare(expr.name, type_id, false);
+
+        Ir {
+            kind: ir::ExprKind::Func(ir::FunctionExpr {
+                slot: self.get_slot(expr.name),
+                params: param_slots,
+                body: body.into(),
+                return_void: return_type == self.builtin_types.t_void,
             }),
+            ty: type_id,
         }
     }
 
-    fn handle_type_cast(
-        &mut self,
-        span: Span,
-        args: &[Expression],
-        type_id: TypeId,
-    ) -> AnalysisResult {
-        let ir = if args.len() == 1 {
-            self.handle_expr(&args[0]).ir_id.map(|arg| {
-                self.emit_ir(
-                    ir::ExprKind::Cast {
-                        ty: type_id,
-                        value: arg,
-                    },
-                    type_id,
-                )
-            })
+    fn handle_type_cast(&mut self, span: Span, args: &[Expression], type_id: TypeId) -> Ir {
+        if args.len() == 1 {
+            let arg = self.handle_expr(&args[0]);
+            Ir {
+                kind: ir::ExprKind::Cast {
+                    ty: type_id,
+                    value: arg.into(),
+                },
+                ty: type_id,
+            }
         } else {
             self.errors.push(SemanticError::ArgsCountMismatch { span });
-            None
-        };
-        AnalysisResult {
-            expr_type: type_id,
-            ir_id: ir,
+            self.placeholder_ir()
         }
     }
 
-    fn handle_call_expr(&mut self, span: Span, expr: &CallExpr) -> AnalysisResult {
+    fn handle_call_expr(&mut self, span: Span, expr: &CallExpr) -> Ir {
         let callee_ar = self.handle_expr(&expr.callee);
-        let callee_type = callee_ar.expr_type;
 
         let mut arg_hir_ids = vec![];
-        match self.types.lookup(callee_type).cloned().unwrap() {
+        match self.types.lookup(callee_ar.ty).cloned().unwrap() {
             TypeInfo::Function { params, ret } => {
                 if params.len() != expr.args.len() {
                     self.errors.push(SemanticError::ArgsCountMismatch {
                         span: expr.callee.span.clone(),
                     })
                 }
-                self.push_scope();
                 for (&param_type, arg) in params.iter().zip(expr.args.iter()) {
                     let arg_ar = self.handle_expr(arg);
-                    arg_hir_ids.push(arg_ar.ir_id);
-                    if !self.is_assignable_to(arg_ar.expr_type, param_type) {
-                        self.emit_type_mismatch_error(
-                            arg.span.clone(),
-                            param_type,
-                            arg_ar.expr_type,
-                        );
+                    if !self.is_assignable_to(arg_ar.ty, param_type) {
+                        self.emit_type_mismatch_error(arg.span.clone(), param_type, arg_ar.ty);
                     }
+                    arg_hir_ids.push(arg_ar);
                 }
-                self.pop_scope();
-                AnalysisResult {
-                    expr_type: ret,
-                    ir_id: if let Some(callee_ir) = callee_ar.ir_id
-                        && arg_hir_ids.iter().all(|ir| ir.is_some())
-                    {
-                        Some(self.emit_ir(
-                            ir::ExprKind::Call(ir::CallExpr {
-                                callee: callee_ir,
-                                args: arg_hir_ids.into_iter().flatten().collect(),
-                            }),
-                            ret,
-                        ))
-                    } else {
-                        None
-                    },
+                Ir {
+                    kind: ir::ExprKind::Call(ir::CallExpr {
+                        callee: callee_ar.into(),
+                        args: arg_hir_ids,
+                    }),
+                    ty: ret,
                 }
             }
             TypeInfo::Any => {
                 // TODO: handle builtin functions
                 for arg in &expr.args {
-                    arg_hir_ids.push(self.handle_expr(arg).ir_id);
+                    arg_hir_ids.push(self.handle_expr(arg));
                 }
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_any,
-                    ir_id: callee_ar.ir_id.map(|callee| {
-                        self.emit_ir(
-                            ir::ExprKind::Call(ir::CallExpr {
-                                callee,
-                                args: arg_hir_ids.into_iter().flatten().collect(),
-                            }),
-                            self.builtin_types.t_any,
-                        )
+                Ir {
+                    kind: ir::ExprKind::Call(ir::CallExpr {
+                        callee: callee_ar.into(),
+                        args: arg_hir_ids,
                     }),
+                    ty: self.builtin_types.t_any,
                 }
             }
             TypeInfo::Tuple(elements) => {
-                let mut ty = self.builtin_types.t_any;
-                let ir = if expr.args.len() == 1 {
-                    arg_hir_ids.push(self.handle_expr(&expr.args[0]).ir_id);
-                    if let ExprKind::Integer(index) = expr.args[0].kind {
-                        ty = elements[index as usize];
-                        callee_ar.ir_id.map(|tuple| {
-                            self.emit_ir(
-                                ir::ExprKind::GetTupleElem {
-                                    tuple,
-                                    index: index as usize,
-                                },
-                                ty,
-                            )
-                        })
+                if expr.args.len() == 1 {
+                    let arg = self.handle_expr(&expr.args[0]);
+                    if let ir::ExprKind::Int(index) = arg.kind {
+                        Ir {
+                            kind: ir::ExprKind::GetTupleElem {
+                                tuple: callee_ar.into(),
+                                index: index as usize,
+                            },
+                            ty: elements[index as usize],
+                        }
                     } else {
                         self.errors.push(SemanticError::UnexpectedExpr {
                             span: expr.args[0].span.clone(),
                             expect: "integer".to_string(),
                             found: format!("{:?}", expr.args[0]),
                         });
-                        None
+                        self.placeholder_ir()
                     }
                 } else {
                     self.errors.push(SemanticError::ArgsCountMismatch { span });
-                    None
-                };
-                AnalysisResult {
-                    expr_type: ty,
-                    ir_id: ir,
+                    self.placeholder_ir()
                 }
             }
             TypeInfo::Type(type_id) => self.handle_type_cast(span, &expr.args, type_id),
@@ -795,41 +666,29 @@ impl SemanticAnalyzer {
                 self.errors.push(SemanticError::NotCallable {
                     callee: expr.callee.as_ref().clone(),
                 });
-                AnalysisResult {
-                    expr_type: self.builtin_types.t_any,
-                    ir_id: None,
-                }
+                self.placeholder_ir()
             }
         }
     }
 
-    fn handle_binary_expr(&mut self, span: Span, expr: &BinaryExpr) -> AnalysisResult {
-        let lhs_ar = self.handle_expr(&expr.lhs);
-        let rhs_ar = self.handle_expr(&expr.rhs);
-        let lhs_type = lhs_ar.expr_type;
-        let rhs_type = rhs_ar.expr_type;
+    fn handle_binary_expr(&mut self, span: Span, expr: &BinaryExpr) -> Ir {
+        let lhs = self.handle_expr(&expr.lhs);
+        let rhs = self.handle_expr(&expr.rhs);
 
-        let type_id = if lhs_type == rhs_type {
-            lhs_type
+        let type_id = if lhs.ty == rhs.ty {
+            lhs.ty
         } else {
-            self.emit_type_mismatch_error(span.clone(), lhs_type, rhs_type);
+            self.emit_type_mismatch_error(span.clone(), lhs.ty, rhs.ty);
             self.builtin_types.t_any
         };
 
-        AnalysisResult {
-            expr_type: type_id,
-            ir_id: if let (Some(lhs_ir), Some(rhs_ir)) = (lhs_ar.ir_id, rhs_ar.ir_id) {
-                Some(self.emit_ir(
-                    ir::ExprKind::Binary(ir::BinaryExpr {
-                        lhs: lhs_ir,
-                        op: expr.op,
-                        rhs: rhs_ir,
-                    }),
-                    type_id,
-                ))
-            } else {
-                None
-            },
+        Ir {
+            kind: ir::ExprKind::Binary(ir::BinaryExpr {
+                lhs: lhs.into(),
+                op: expr.op,
+                rhs: rhs.into(),
+            }),
+            ty: type_id,
         }
     }
 
@@ -886,32 +745,24 @@ impl SemanticAnalyzer {
         type_id
     }
 
-    fn handle_member_expr(&mut self, expr: &MemberExpr) -> AnalysisResult {
-        let obj_ar = self.handle_expr(&expr.object);
+    fn handle_member_expr(&mut self, expr: &MemberExpr) -> Ir {
+        let obj = self.handle_expr(&expr.object);
 
-        if let Some(obj_ir) = obj_ar.ir_id {
-            if obj_ar.expr_type == self.builtin_types.t_string {
-                if let ExprKind::Id(id_expr) = &expr.property.kind {
-                    if id_expr.symbol == self.builtin_symbols.s_Length {
-                        return AnalysisResult {
-                            expr_type: self.builtin_types.t_int,
-                            ir_id: Some(self.emit_ir(
-                                ir::ExprKind::GetLength(obj_ir),
-                                self.builtin_types.t_int,
-                            )),
-                        };
-                    }
+        if obj.ty == self.builtin_types.t_string {
+            if let ExprKind::Id(id_expr) = &expr.property.kind {
+                if id_expr.symbol == self.builtin_symbols.s_Length {
+                    return Ir {
+                        kind: ir::ExprKind::GetLength(obj.into()),
+                        ty: self.builtin_types.t_int,
+                    };
                 }
             }
         }
 
-        AnalysisResult {
-            expr_type: self.builtin_types.t_any,
-            ir_id: None,
-        }
+        self.placeholder_ir()
     }
 
-    fn handle_construct_expr(&mut self, expr: &ConstructExpr) -> AnalysisResult {
+    fn handle_construct_expr(&mut self, expr: &ConstructExpr) -> Ir {
         if let ExprKind::Id(id_expr) = &expr.callee.kind {
             if id_expr.symbol == self.builtin_symbols.s_option {
                 return self.handle_construct_option(&expr.arg);
@@ -921,15 +772,12 @@ impl SemanticAnalyzer {
         todo!()
     }
 
-    fn handle_construct_option(&mut self, arg: &Expression) -> AnalysisResult {
-        let arg_ar = self.handle_expr(arg);
-        let ty = self.types.intern(TypeInfo::Option(arg_ar.expr_type));
-        let ir = arg_ar
-            .ir_id
-            .map(|arg_ir| self.emit_ir(ir::ExprKind::Option(Some(arg_ir)), ty));
-        AnalysisResult {
-            expr_type: ty,
-            ir_id: ir,
+    fn handle_construct_option(&mut self, arg: &Expression) -> Ir {
+        let arg = self.handle_expr(arg);
+        let ty = self.types.intern(TypeInfo::Option(arg.ty));
+        Ir {
+            kind: ir::ExprKind::Option(Some(arg.into())),
+            ty,
         }
     }
 }

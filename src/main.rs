@@ -45,11 +45,10 @@ fn main() {
             semantic_ctx.builtin_symbols,
             semantic_ctx.builtin_types,
             parser.const_pool.into_table(),
-            semantic_ctx.irs.clone(),
             &semantic_ctx.scopes[0],
         );
         let mut value = Ok(Value::Void);
-        entry.into_iter().for_each(|ir| value = ctx.eval(ir));
+        entry.into_iter().for_each(|ir| value = ctx.eval(&ir));
         println!("{:?}", value);
     }
 }
