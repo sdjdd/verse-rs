@@ -2,19 +2,22 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{BinaryOperator, CompareOp},
-    core::{ConstValue, Symbol},
-    ir::{self, ExprId},
+    core::ConstValue,
+    ir::{self, ExprId, Slot},
     runtime::{
         CallContext, Failure, FunctionId, FunctionKind, TypeId, Value,
         builtin_funcs::{self, write_value},
         heap::{Heap, HeapObj, ObjectId, SimpleHeap},
     },
-    semantic::builtins::{BuiltinSymbols, BuiltinTypes},
+    semantic::{
+        Scope,
+        builtins::{BuiltinSymbols, BuiltinTypes},
+    },
 };
 
 #[derive(Default)]
 struct EvalScope {
-    bindings: HashMap<Symbol, Value>,
+    bindings: Vec<Value>,
 }
 
 pub struct Evaluator {
@@ -32,19 +35,38 @@ impl Evaluator {
         builtin_types: BuiltinTypes,
         const_table: Vec<ConstValue>,
         irs: Vec<ir::Ir>,
+        root_scope: &Scope,
     ) -> Self {
-        let mut bindings = HashMap::new();
+        let root_values = [
+            (builtin_symbols.s_int, Value::Type(builtin_types.t_int)),
+            (builtin_symbols.s_float, Value::Type(builtin_types.t_float)),
+            (builtin_symbols.s_logic, Value::Type(builtin_types.t_logic)),
+            (builtin_symbols.s_char, Value::Type(builtin_types.t_char)),
+            (
+                builtin_symbols.s_char32,
+                Value::Type(builtin_types.t_char32),
+            ),
+            (
+                builtin_symbols.s_string,
+                Value::Type(builtin_types.t_string),
+            ),
+            (builtin_symbols.s_any, Value::Type(builtin_types.t_any)),
+            (builtin_symbols.s_void, Value::Type(builtin_types.t_void)),
+            (
+                builtin_symbols.s_Print,
+                Value::Function {
+                    kind: FunctionKind::Native(builtin_funcs::print),
+                },
+            ),
+        ];
 
-        bindings.insert(
-            builtin_symbols.s_Print,
-            Value::Function {
-                kind: FunctionKind::Native(builtin_funcs::print),
-            },
-        );
+        let mut root_values: Vec<_> = root_values
+            .into_iter()
+            .map(|(symbol, value)| (root_scope.lookup_slot(symbol).0, value))
+            .collect();
 
-        for (s, t) in builtin_types.pairs(&builtin_symbols) {
-            bindings.insert(s, Value::Type(t));
-        }
+        root_values.sort_by(|a, b| a.0.cmp(&b.0));
+        let bindings = root_values.into_iter().map(|(_, v)| v).collect();
 
         let root_scope = EvalScope {
             bindings,
@@ -52,7 +74,7 @@ impl Evaluator {
         };
 
         Self {
-            scopes: vec![root_scope],
+            scopes: vec![root_scope, EvalScope::default()],
             functions: HashMap::new(),
             builtin_types: builtin_types,
             irs,
@@ -69,21 +91,12 @@ impl Evaluator {
         self.scopes.pop();
     }
 
-    pub fn declare(&mut self, symbol: Symbol, value: Value) {
-        self.scopes
-            .last_mut()
-            .unwrap()
-            .bindings
-            .insert(symbol, value);
-    }
-
-    pub fn resolve_symbol(&self, symbol: Symbol) -> Option<Value> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(v) = scope.bindings.get(&symbol) {
-                return Some(*v);
-            }
+    pub fn declare(&mut self, slot: Slot, value: Value) {
+        let bindings = &mut self.scopes.last_mut().unwrap().bindings;
+        if bindings.len() < slot.0 + 1 {
+            bindings.resize(slot.0 + 1, Value::Void);
         }
-        None
+        bindings[slot.0] = value
     }
 
     fn fetch_string(&self, id: ObjectId) -> &str {
@@ -109,8 +122,8 @@ impl Evaluator {
             }
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
             ExprKind::Type(e) => Ok(Value::Type(*e)),
-            ExprKind::Set(expr) => self.eval_set(expr),
-            ExprKind::Id(s) => self.eval_identifier(*s),
+            ExprKind::StoreLocal(expr) => self.eval_set(expr),
+            ExprKind::LoadUpvalue { depth, slot } => self.eval_get_local(*depth, *slot),
             ExprKind::Binary(expr) => self.eval_binary(expr),
             ExprKind::If(expr) => self.eval_if(expr),
             ExprKind::Template(expr) => self.eval_template(expr),
@@ -136,18 +149,15 @@ impl Evaluator {
         }
     }
 
-    fn eval_set(&mut self, expr: &ir::SetExpr) -> Result<Value, Failure> {
+    fn eval_set(&mut self, expr: &ir::SetLocalIr) -> Result<Value, Failure> {
         let value = self.eval(expr.value)?;
-        self.declare(expr.target, value);
+        self.declare(expr.slot, value);
         Ok(value)
     }
 
-    fn eval_identifier(&mut self, symbol: Symbol) -> Result<Value, Failure> {
-        if let Some(value) = self.resolve_symbol(symbol) {
-            Ok(value)
-        } else {
-            panic!("identifier not defined, symbol: {:?}", symbol)
-        }
+    fn eval_get_local(&self, up: usize, slot: Slot) -> Result<Value, Failure> {
+        let value = self.scopes.iter().rev().skip(up).next().unwrap().bindings[slot.0];
+        Ok(value)
     }
 
     fn eval_option_value(&mut self, expr_id: Option<ExprId>) -> Result<Value, Failure> {
@@ -343,7 +353,7 @@ impl Evaluator {
     ) -> Result<Value, Failure> {
         let func_id = FunctionId(expr_id.0);
         self.declare(
-            expr.name,
+            expr.slot,
             Value::Function {
                 kind: FunctionKind::Verse(func_id),
             },

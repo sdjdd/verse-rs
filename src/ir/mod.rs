@@ -1,11 +1,14 @@
 use crate::{
     ast::{BinaryOperator, CompareOp},
-    core::{ConstId, Symbol},
+    core::ConstId,
     runtime::TypeId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(pub usize);
+
+#[derive(Debug, Clone, Copy)]
+pub struct Slot(pub usize);
 
 #[derive(Debug, Clone)]
 pub struct Ir {
@@ -16,8 +19,8 @@ pub struct Ir {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    Id(Symbol),
-    Set(SetExpr),
+    LoadUpvalue { depth: usize, slot: Slot },
+    StoreLocal(SetLocalIr),
     Int(i64),
     Float(f64),
     Char(u8),
@@ -41,8 +44,8 @@ pub enum ExprKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct SetExpr {
-    pub target: Symbol,
+pub struct SetLocalIr {
+    pub slot: Slot,
     pub value: ExprId,
 }
 
@@ -80,8 +83,8 @@ pub struct CompareChainExpr {
 
 #[derive(Debug, Clone)]
 pub struct FunctionExpr {
-    pub name: Symbol,
-    pub params: Vec<Symbol>,
+    pub slot: Slot,
+    pub params: Vec<Slot>,
     pub body: ExprId,
     pub return_void: bool,
 }

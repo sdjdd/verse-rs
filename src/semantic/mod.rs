@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     ast::*,
     core::{Symbol, SymbolTable},
-    ir::{self, Ir},
+    ir::{self, Ir, Slot},
     lexer::Span,
     runtime::TypeId,
     semantic::builtins::{BuiltinSymbols, BuiltinTypes},
@@ -62,7 +62,33 @@ pub struct Binding {
 
 #[derive(Default)]
 pub struct Scope {
-    bindings: HashMap<Symbol, Binding>,
+    bindings: Vec<Binding>,
+    slot_pool: HashMap<Symbol, Slot>,
+}
+
+impl Scope {
+    fn declare(&mut self, symbol: Symbol, binding: Binding) -> Slot {
+        if let Some(slot) = self.slot_pool.get(&symbol) {
+            self.bindings[slot.0] = binding;
+            return *slot;
+        }
+        let slot = Slot(self.bindings.len());
+        self.slot_pool.insert(symbol, slot);
+        self.bindings.push(binding);
+        slot
+    }
+
+    fn lookup(&self, symbol: Symbol) -> Option<&Binding> {
+        if let Some(slot) = self.slot_pool.get(&symbol) {
+            Some(&self.bindings[slot.0])
+        } else {
+            None
+        }
+    }
+
+    pub fn lookup_slot(&self, symbol: Symbol) -> Slot {
+        self.slot_pool.get(&symbol).copied().unwrap()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -77,7 +103,7 @@ pub struct SemanticAnalyzer {
     pub errors: Vec<SemanticError>,
     pub irs: Vec<Ir>,
 
-    scopes: Vec<Scope>,
+    pub scopes: Vec<Scope>,
     pub types: TypeRegistry,
 }
 
@@ -90,7 +116,7 @@ impl SemanticAnalyzer {
         let bt = BuiltinTypes::install(&mut types);
 
         for (symbol, type_id) in bt.pairs(&bs) {
-            root_scope.bindings.insert(
+            root_scope.declare(
                 symbol,
                 Binding {
                     type_id: types.intern(TypeInfo::Type(type_id)),
@@ -98,8 +124,7 @@ impl SemanticAnalyzer {
                 },
             );
         }
-
-        root_scope.bindings.insert(
+        root_scope.declare(
             bs.s_Print,
             Binding {
                 type_id: types.intern(TypeInfo::Any),
@@ -108,7 +133,7 @@ impl SemanticAnalyzer {
         );
 
         Self {
-            scopes: vec![root_scope],
+            scopes: vec![root_scope, Scope::default()],
             builtin_symbols: bs,
             builtin_types: bt,
             errors: vec![],
@@ -125,17 +150,29 @@ impl SemanticAnalyzer {
         self.scopes.pop();
     }
 
-    pub fn declare(&mut self, symbol: Symbol, binding: Binding) {
-        self.scopes
-            .last_mut()
-            .unwrap()
-            .bindings
-            .insert(symbol, binding);
+    pub fn declare(&mut self, symbol: Symbol, binding: Binding) -> Slot {
+        // TODO: check shadowing
+        self.scopes.last_mut().unwrap().declare(symbol, binding)
+    }
+
+    fn get_slot(&self, symbol: Symbol) -> Slot {
+        self.scopes.last().unwrap().lookup_slot(symbol)
+    }
+
+    fn lookup_slot(&self, symbol: Symbol) -> (usize, Slot) {
+        let mut parent = 0;
+        for scope in self.scopes.iter().rev() {
+            if let Some(slot) = scope.slot_pool.get(&symbol) {
+                return (parent, *slot);
+            }
+            parent += 1;
+        }
+        panic!()
     }
 
     fn lookup(&mut self, symbol: &Symbol) -> Option<&Binding> {
         for scope in self.scopes.iter().rev() {
-            let binding = scope.bindings.get(symbol);
+            let binding = scope.lookup(*symbol);
             if binding.is_some() {
                 return binding;
             }
@@ -270,11 +307,20 @@ impl SemanticAnalyzer {
         mutable: bool,
     ) -> AnalysisResult {
         let value_ar = self.handle_expr(value);
+
+        self.declare(
+            name,
+            Binding {
+                type_id: ty,
+                mutable,
+            },
+        );
+
         let ir = if value_ar.expr_type == self.builtin_types.t_false {
             let none_ir = self.emit_ir(ir::ExprKind::Option(None), ty);
             Some(self.emit_ir(
-                ir::ExprKind::Set(ir::SetExpr {
-                    target: name,
+                ir::ExprKind::StoreLocal(ir::SetLocalIr {
+                    slot: self.get_slot(name),
                     value: none_ir,
                 }),
                 ty,
@@ -282,8 +328,8 @@ impl SemanticAnalyzer {
         } else if self.is_assignable_to(value_ar.expr_type, ty) {
             value_ar.ir_id.map(|value_ir| {
                 self.emit_ir(
-                    ir::ExprKind::Set(ir::SetExpr {
-                        target: name,
+                    ir::ExprKind::StoreLocal(ir::SetLocalIr {
+                        slot: self.get_slot(name),
                         value: value_ir,
                     }),
                     ty,
@@ -297,14 +343,6 @@ impl SemanticAnalyzer {
             });
             None
         };
-
-        self.declare(
-            name,
-            Binding {
-                type_id: ty,
-                mutable,
-            },
-        );
 
         AnalysisResult {
             expr_type: ty,
@@ -339,7 +377,7 @@ impl SemanticAnalyzer {
             (ar, value_type)
         };
 
-        self.declare(
+        let slot = self.declare(
             name,
             Binding {
                 type_id: binding_type,
@@ -351,8 +389,8 @@ impl SemanticAnalyzer {
             expr_type: binding_type,
             ir_id: ar.ir_id.map(|value_ir| {
                 self.emit_ir(
-                    ir::ExprKind::Set(ir::SetExpr {
-                        target: name,
+                    ir::ExprKind::StoreLocal(ir::SetLocalIr {
+                        slot,
                         value: value_ir,
                     }),
                     binding_type,
@@ -392,8 +430,8 @@ impl SemanticAnalyzer {
             expr_type: type_id,
             ir_id: ar.ir_id.map(|value_ir| {
                 self.emit_ir(
-                    ir::ExprKind::Set(ir::SetExpr {
-                        target: name,
+                    ir::ExprKind::StoreLocal(ir::SetLocalIr {
+                        slot: self.get_slot(name),
                         value: value_ir,
                     }),
                     type_id,
@@ -403,21 +441,21 @@ impl SemanticAnalyzer {
     }
 
     fn handle_id_expr(&mut self, span: Span, expr: &IdExpr) -> AnalysisResult {
-        let type_id = if let Some(binding) = self.lookup(&expr.symbol).cloned() {
-            binding.type_id
+        let (type_id, ir) = if let Some(binding) = self.lookup(&expr.symbol).cloned() {
+            let (depth, slot) = self.lookup_slot(expr.symbol);
+            let ir = self.emit_ir(ir::ExprKind::LoadUpvalue { depth, slot }, binding.type_id);
+            (binding.type_id, Some(ir))
         } else {
             self.errors.push(SemanticError::Reference {
                 span,
                 symbol: expr.symbol,
             });
-            self.builtin_types.t_any
+            (self.builtin_types.t_any, None)
         };
-
-        let ir = self.emit_ir(ir::ExprKind::Id(expr.symbol), type_id);
 
         AnalysisResult {
             expr_type: type_id,
-            ir_id: Some(ir),
+            ir_id: ir,
         }
     }
 
@@ -572,9 +610,6 @@ impl SemanticAnalyzer {
 
     fn handle_func_expr(&mut self, expr: &FunctionExpr) -> AnalysisResult {
         let return_type = self.handle_type_expr(&expr.return_type);
-
-        self.push_scope();
-
         let param_names: Vec<_> = expr.params.iter().map(|p| p.name).collect();
         let param_types: Vec<_> = expr
             .params
@@ -593,8 +628,6 @@ impl SemanticAnalyzer {
         }
 
         let body_ar = self.handle_expr(&expr.body);
-
-        self.pop_scope();
 
         if return_type != self.builtin_types.t_void {
             if body_ar.expr_type != return_type {
@@ -624,8 +657,11 @@ impl SemanticAnalyzer {
             ir_id: body_ar.ir_id.map(|body_ir| {
                 self.emit_ir(
                     ir::ExprKind::Func(ir::FunctionExpr {
-                        name: expr.name,
-                        params: param_names,
+                        slot: self.get_slot(expr.name),
+                        params: param_names
+                            .iter()
+                            .map(|name| self.get_slot(*name))
+                            .collect(),
                         body: body_ir,
                         return_void: return_type == self.builtin_types.t_void,
                     }),
@@ -673,6 +709,7 @@ impl SemanticAnalyzer {
                         span: expr.callee.span.clone(),
                     })
                 }
+                self.push_scope();
                 for (&param_type, arg) in params.iter().zip(expr.args.iter()) {
                     let arg_ar = self.handle_expr(arg);
                     arg_hir_ids.push(arg_ar.ir_id);
@@ -684,6 +721,7 @@ impl SemanticAnalyzer {
                         );
                     }
                 }
+                self.pop_scope();
                 AnalysisResult {
                     expr_type: ret,
                     ir_id: if let Some(callee_ir) = callee_ar.ir_id
