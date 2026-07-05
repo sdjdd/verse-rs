@@ -108,7 +108,6 @@ pub struct SemanticAnalyzer {
     pub builtin_symbols: BuiltinSymbols,
     pub builtin_types: BuiltinTypes,
     pub errors: Vec<SemanticError>,
-    pub irs: Vec<Ir>,
 
     pub scopes: Vec<Scope>,
     pub types: TypeRegistry,
@@ -133,7 +132,6 @@ impl SemanticAnalyzer {
             builtin_types: bt,
             errors: vec![],
             types,
-            irs: vec![],
         }
     }
 
