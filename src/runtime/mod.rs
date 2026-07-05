@@ -23,7 +23,7 @@ pub enum FunctionKind {
     Verse(FunctionId),
 }
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct TypeId(pub usize);
 
 #[derive(Debug, Clone, Copy)]

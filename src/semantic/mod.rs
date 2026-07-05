@@ -55,8 +55,8 @@ impl TypeRegistry {
 }
 
 #[derive(Clone, Copy)]
-pub struct Binding {
-    slot: Slot,
+pub struct Variable {
+    pub slot: Slot,
     pub type_id: TypeId,
     pub mutable: bool,
 }
@@ -64,7 +64,7 @@ pub struct Binding {
 pub struct Scope {
     own_slots: bool,
     next_slot: usize,
-    slot_pool: HashMap<Symbol, Binding>,
+    variables: HashMap<Symbol, Variable>,
 }
 
 impl Scope {
@@ -72,35 +72,35 @@ impl Scope {
         Self {
             own_slots: next_slot == 0,
             next_slot,
-            slot_pool: HashMap::new(),
+            variables: HashMap::new(),
         }
     }
 
-    fn declare(&mut self, symbol: Symbol, ty: TypeId, mutable: bool) -> Slot {
-        if let Some(binding) = self.slot_pool.get_mut(&symbol) {
-            binding.type_id = ty;
+    fn declare(&mut self, symbol: Symbol, type_id: TypeId, mutable: bool) -> Slot {
+        if let Some(binding) = self.variables.get_mut(&symbol) {
+            binding.type_id = type_id;
             binding.mutable = mutable;
             return binding.slot;
         }
         let slot = Slot(self.next_slot);
         self.next_slot += 1;
-        self.slot_pool.insert(
+        self.variables.insert(
             symbol,
-            Binding {
+            Variable {
                 slot,
-                type_id: ty,
+                type_id,
                 mutable,
             },
         );
         slot
     }
 
-    fn lookup(&self, symbol: Symbol) -> Option<&Binding> {
-        self.slot_pool.get(&symbol)
+    pub fn lookup(&self, symbol: Symbol) -> Option<&Variable> {
+        self.variables.get(&symbol)
     }
 
     pub fn lookup_slot(&self, symbol: Symbol) -> Slot {
-        self.slot_pool.get(&symbol).unwrap().slot
+        self.variables.get(&symbol).unwrap().slot
     }
 }
 
@@ -156,34 +156,21 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn declare(&mut self, symbol: Symbol, ty: TypeId, mutable: bool) -> Slot {
+    pub fn declare(&mut self, symbol: Symbol, type_id: TypeId, mutable: bool) -> Slot {
         // TODO: check shadowing
-        self.scopes.last_mut().unwrap().declare(symbol, ty, mutable)
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .declare(symbol, type_id, mutable)
     }
 
-    fn get_slot(&self, symbol: Symbol) -> Slot {
-        self.scopes.last().unwrap().lookup_slot(symbol)
-    }
-
-    fn lookup_slot(&self, symbol: Symbol) -> (usize, Slot) {
+    fn lookup(&mut self, symbol: &Symbol) -> Option<(usize, &Variable)> {
         let mut depth = 0;
         for scope in self.scopes.iter().rev() {
-            if scope.own_slots {
-                if let Some(binding) = scope.slot_pool.get(&symbol) {
-                    return (depth, binding.slot);
-                }
-                depth += 1;
+            if let Some(var) = scope.lookup(*symbol) {
+                return Some((depth, var));
             }
-        }
-        panic!()
-    }
-
-    fn lookup(&mut self, symbol: &Symbol) -> Option<&Binding> {
-        for scope in self.scopes.iter().rev() {
-            let binding = scope.lookup(*symbol);
-            if binding.is_some() {
-                return binding;
-            }
+            depth += 1
         }
         None
     }
@@ -299,12 +286,12 @@ impl SemanticAnalyzer {
     ) -> Ir {
         let value_ir = self.handle_expr(value);
 
-        self.declare(name, ty, mutable);
+        let slot = self.declare(name, ty, mutable);
 
         if value_ir.ty == self.builtin_types.t_false {
             Ir {
                 kind: ir::ExprKind::StoreLocal {
-                    slot: self.get_slot(name),
+                    slot,
                     value: Box::new(Ir {
                         kind: ir::ExprKind::Option(None),
                         ty,
@@ -315,7 +302,7 @@ impl SemanticAnalyzer {
         } else if self.is_assignable_to(value_ir.ty, ty) {
             Ir {
                 kind: ir::ExprKind::StoreLocal {
-                    slot: self.get_slot(name),
+                    slot,
                     value: Box::new(value_ir),
                 },
                 ty,
@@ -370,45 +357,49 @@ impl SemanticAnalyzer {
     fn handle_set_expr(&mut self, expr: &SetExpr) -> Ir {
         let value_ir = self.handle_expr(&expr.expr);
         let value_type = value_ir.ty;
-        let mut type_id = value_type;
 
-        let name = match &expr.target.kind {
+        match &expr.target.kind {
             LValueKind::Id(id_expr) => {
-                if let Some(binding) = self.lookup(&id_expr.symbol).cloned() {
-                    type_id = binding.type_id;
-                    if binding.type_id != value_type {
+                if let Some((depth, &var)) = self.lookup(&id_expr.symbol) {
+                    if var.type_id != value_type {
                         self.emit_type_mismatch_error(
                             expr.expr.span.clone(),
-                            binding.type_id,
+                            var.type_id,
                             value_type,
                         );
                     }
-                    if !binding.mutable {
+                    if !var.mutable {
                         self.errors.push(SemanticError::Mutability {
                             span: expr.target.span.clone(),
                             symbol: id_expr.symbol,
                         })
                     }
+                    if depth == 0 {
+                        Ir {
+                            kind: ir::ExprKind::StoreLocal {
+                                slot: var.slot,
+                                value: Box::new(value_ir),
+                            },
+                            ty: var.type_id,
+                        }
+                    } else {
+                        todo!("StoreUpvalue")
+                    }
+                } else {
+                    self.placeholder_ir()
                 }
-                id_expr.symbol
             }
-        };
-
-        Ir {
-            kind: ir::ExprKind::StoreLocal {
-                slot: self.get_slot(name),
-                value: Box::new(value_ir),
-            },
-            ty: type_id,
         }
     }
 
     fn handle_id_expr(&mut self, span: Span, expr: &IdExpr) -> Ir {
-        if let Some(binding) = self.lookup(&expr.symbol).cloned() {
-            let (depth, slot) = self.lookup_slot(expr.symbol);
+        if let Some((depth, &var)) = self.lookup(&expr.symbol) {
             Ir {
-                kind: ir::ExprKind::LoadUpvalue { depth, slot },
-                ty: binding.type_id,
+                kind: ir::ExprKind::LoadUpvalue {
+                    depth,
+                    slot: var.slot,
+                },
+                ty: var.type_id,
             }
         } else {
             self.errors.push(SemanticError::Reference {
@@ -542,8 +533,11 @@ impl SemanticAnalyzer {
             .collect();
 
         self.push_scope(true);
+
+        let mut param_slots = vec![];
         for (param_name, param_type) in param_names.iter().zip(param_types.iter()) {
-            self.declare(*param_name, *param_type, true);
+            let slot = self.declare(*param_name, *param_type, true);
+            param_slots.push(slot);
         }
 
         let body = self.handle_expr(&expr.body);
@@ -559,18 +553,13 @@ impl SemanticAnalyzer {
             ret: return_type,
         });
 
-        let param_slots = param_names
-            .iter()
-            .map(|name| self.get_slot(*name))
-            .collect();
-
         self.pop_scope();
 
-        self.declare(expr.name, type_id, false);
+        let slot = self.declare(expr.name, type_id, false);
 
         Ir {
             kind: ir::ExprKind::Func(ir::FunctionExpr {
-                slot: self.get_slot(expr.name),
+                slot,
                 params: param_slots,
                 body: body.into(),
                 return_void: return_type == self.builtin_types.t_void,
@@ -693,7 +682,7 @@ impl SemanticAnalyzer {
     fn handle_type_expr(&mut self, expr: &TypeExpr) -> TypeId {
         let type_id = match &expr.kind {
             TypeExprKind::Named(symbol) => (|| -> TypeId {
-                if let Some(binding) = self.lookup(symbol) {
+                if let Some((_, &binding)) = self.lookup(symbol) {
                     let type_id = binding.type_id;
                     if let Some(ty) = self.types.lookup(type_id) {
                         if let TypeInfo::Type(inner_type) = ty {

@@ -58,7 +58,7 @@ impl Evaluator {
 
         let mut root_values: Vec<_> = root_values
             .into_iter()
-            .map(|(symbol, value)| (root_scope.lookup_slot(symbol).0, value))
+            .map(|(symbol, value)| (root_scope.lookup(symbol).unwrap().slot.0, value))
             .collect();
 
         root_values.sort_by(|a, b| a.0.cmp(&b.0));
