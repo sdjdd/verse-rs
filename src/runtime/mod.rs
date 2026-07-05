@@ -18,7 +18,7 @@ pub type NativeFunction = fn(ctx: &mut CallContext);
 pub struct FunctionId(pub usize);
 
 #[derive(Debug, Clone, Copy)]
-pub enum FunctionKind {
+pub enum FnKind {
     Native(NativeFunction),
     Verse(FunctionId),
 }
@@ -39,7 +39,7 @@ pub enum Value {
 
     Option(Option<ObjectId>),
     Tuple { ty: TypeId, oid: ObjectId },
-    Function { kind: FunctionKind },
+    Function { kind: FnKind },
     Type(TypeId),
 }
 

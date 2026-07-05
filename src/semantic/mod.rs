@@ -3,56 +3,14 @@ use thiserror::Error;
 
 use crate::{
     ast::*,
-    core::{Symbol, SymbolTable},
+    core::{
+        PredefinedSymbols, Symbol, SymbolRegistry,
+        types::{PredefinedTypes, TypeInfo, TypeRegistry},
+    },
     ir::{self, Ir, Slot},
     lexer::Span,
     runtime::TypeId,
-    semantic::builtins::{BuiltinSymbols, BuiltinTypes},
 };
-
-pub mod builtins;
-
-#[derive(Hash, PartialEq, Eq, Clone, Debug)]
-pub enum TypeInfo {
-    Void,
-    Any,
-    Int,
-    Float,
-    False,
-    Logic,
-    Char,
-    Char32,
-    String,
-
-    Option(TypeId),
-    Tuple(Vec<TypeId>),
-    Function { params: Vec<TypeId>, ret: TypeId },
-
-    Type(TypeId),
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct TypeRegistry {
-    map: HashMap<TypeInfo, TypeId>,
-    vec: Vec<TypeInfo>,
-}
-
-impl TypeRegistry {
-    pub fn intern(&mut self, key: TypeInfo) -> TypeId {
-        if let Some(&id) = self.map.get(&key) {
-            return id;
-        }
-
-        let id = TypeId(self.vec.len());
-        self.map.insert(key.clone(), id);
-        self.vec.push(key);
-        id
-    }
-
-    pub fn lookup(&self, type_id: TypeId) -> Option<&TypeInfo> {
-        self.vec.get(type_id.0)
-    }
-}
 
 #[derive(Clone, Copy)]
 pub struct Variable {
@@ -105,8 +63,8 @@ impl Scope {
 }
 
 pub struct SemanticAnalyzer {
-    pub builtin_symbols: BuiltinSymbols,
-    pub builtin_types: BuiltinTypes,
+    pub builtin_symbols: PredefinedSymbols,
+    pub builtin_types: PredefinedTypes,
     pub errors: Vec<SemanticError>,
 
     pub scopes: Vec<Scope>,
@@ -114,17 +72,27 @@ pub struct SemanticAnalyzer {
 }
 
 impl SemanticAnalyzer {
-    pub fn new(symbol_table: &mut SymbolTable) -> Self {
+    pub fn new(symbol_table: &mut SymbolRegistry) -> Self {
         let mut root_scope = Scope::new(0);
         let mut types = TypeRegistry::default();
 
-        let bs = BuiltinSymbols::install(symbol_table);
-        let bt = BuiltinTypes::install(&mut types);
+        let bs = PredefinedSymbols::install(symbol_table);
+        let bt = PredefinedTypes::install(&mut types);
 
-        for (symbol, type_id) in bt.pairs(&bs) {
-            root_scope.declare(symbol, types.intern(TypeInfo::Type(type_id)), false);
+        let predefined_vars = [
+            (bs.s_int, TypeInfo::Type(bt.t_int)),
+            (bs.s_float, TypeInfo::Type(bt.t_float)),
+            (bs.s_logic, TypeInfo::Type(bt.t_logic)),
+            (bs.s_char, TypeInfo::Type(bt.t_char)),
+            (bs.s_char32, TypeInfo::Type(bt.t_char32)),
+            (bs.s_string, TypeInfo::Type(bt.t_string)),
+            (bs.s_any, TypeInfo::Type(bt.t_any)),
+            (bs.s_void, TypeInfo::Type(bt.t_void)),
+            (bs.s_Print, TypeInfo::Any),
+        ];
+        for (s, t) in predefined_vars {
+            root_scope.declare(s, types.intern(t), false);
         }
-        root_scope.declare(bs.s_Print, types.intern(TypeInfo::Any), false);
 
         Self {
             scopes: vec![root_scope, Scope::new(0)],

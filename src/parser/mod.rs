@@ -2,10 +2,9 @@ use thiserror::Error;
 
 use crate::{
     ast::*,
-    core::{ConstId, ConstValue, SymbolTable},
+    core::{ConstId, ConstValue, PredefinedSymbols, SymbolRegistry},
     lexer::{LexerError, Span, Token},
     parser::const_pool::ConstPool,
-    semantic::builtins::BuiltinSymbols,
 };
 
 mod const_pool;
@@ -37,16 +36,16 @@ pub struct Parser<'src> {
     tokens: &'src [(Token, Span)],
     pos: usize,
     current_token_span: Span,
-    symbol_table: SymbolTable,
-    builtin_symbols: BuiltinSymbols,
+    pub symbol_table: SymbolRegistry,
+    builtin_symbols: PredefinedSymbols,
 
     pub const_pool: ConstPool,
 }
 
 impl<'src> Parser<'src> {
     pub fn new(source: &'src str, tokens: &'src [(Token, Span)]) -> Self {
-        let mut st = SymbolTable::new();
-        let builtin_symbols = BuiltinSymbols::install(&mut st);
+        let mut st = SymbolRegistry::new();
+        let builtin_symbols = PredefinedSymbols::install(&mut st);
 
         Self {
             source,
@@ -57,14 +56,6 @@ impl<'src> Parser<'src> {
             builtin_symbols,
             const_pool: ConstPool::new(),
         }
-    }
-
-    pub fn get_symbol_table(&self) -> &SymbolTable {
-        &self.symbol_table
-    }
-
-    pub fn get_symbol_table_mut(&mut self) -> &mut SymbolTable {
-        &mut self.symbol_table
     }
 
     fn span(&self) -> Span {

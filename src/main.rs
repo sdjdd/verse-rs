@@ -29,16 +29,11 @@ fn main() {
 
     // println!("{:#?}", program.expressions);
 
-    let mut semantic_ctx = SemanticAnalyzer::new(parser.get_symbol_table_mut());
+    let mut semantic_ctx = SemanticAnalyzer::new(&mut parser.symbol_table);
 
     let entry = semantic_ctx.analyze(&program.expressions);
     for err in &semantic_ctx.errors {
-        print_semantic_error(
-            &err,
-            &source,
-            parser.get_symbol_table(),
-            &semantic_ctx.types,
-        );
+        print_semantic_error(&err, &source, &parser.symbol_table, &semantic_ctx.types);
     }
     if semantic_ctx.errors.is_empty() {
         let mut ctx = Evaluator::new(

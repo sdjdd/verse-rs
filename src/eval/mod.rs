@@ -1,16 +1,13 @@
 use crate::{
     ast::{BinaryOperator, CompareOp},
-    core::ConstValue,
+    core::{ConstValue, PredefinedSymbols, types::PredefinedTypes},
     ir::{self, ExprKind, FunctionExpr, Ir, Slot},
     runtime::{
-        CallContext, Failure, FunctionId, FunctionKind, TypeId, Value,
+        CallContext, Failure, FnKind, FunctionId, TypeId, Value,
         builtin_funcs::{self, write_value},
         heap::{Heap, HeapObj, ObjectId, SimpleHeap},
     },
-    semantic::{
-        Scope,
-        builtins::{BuiltinSymbols, BuiltinTypes},
-    },
+    semantic::Scope,
 };
 
 #[derive(Default)]
@@ -21,37 +18,31 @@ struct EvalScope {
 pub struct Evaluator {
     scopes: Vec<EvalScope>,
     functions: Vec<FunctionExpr>,
-    builtin_types: BuiltinTypes,
+    builtin_types: PredefinedTypes,
     const_table: Vec<ConstValue>,
     heap: Box<dyn Heap>,
 }
 
 impl Evaluator {
     pub fn new(
-        builtin_symbols: BuiltinSymbols,
-        builtin_types: BuiltinTypes,
+        ps: PredefinedSymbols,
+        pt: PredefinedTypes,
         const_table: Vec<ConstValue>,
         root_scope: &Scope,
     ) -> Self {
         let root_values = [
-            (builtin_symbols.s_int, Value::Type(builtin_types.t_int)),
-            (builtin_symbols.s_float, Value::Type(builtin_types.t_float)),
-            (builtin_symbols.s_logic, Value::Type(builtin_types.t_logic)),
-            (builtin_symbols.s_char, Value::Type(builtin_types.t_char)),
+            (ps.s_int, Value::Type(pt.t_int)),
+            (ps.s_float, Value::Type(pt.t_float)),
+            (ps.s_logic, Value::Type(pt.t_logic)),
+            (ps.s_char, Value::Type(pt.t_char)),
+            (ps.s_char32, Value::Type(pt.t_char32)),
+            (ps.s_string, Value::Type(pt.t_string)),
+            (ps.s_any, Value::Type(pt.t_any)),
+            (ps.s_void, Value::Type(pt.t_void)),
             (
-                builtin_symbols.s_char32,
-                Value::Type(builtin_types.t_char32),
-            ),
-            (
-                builtin_symbols.s_string,
-                Value::Type(builtin_types.t_string),
-            ),
-            (builtin_symbols.s_any, Value::Type(builtin_types.t_any)),
-            (builtin_symbols.s_void, Value::Type(builtin_types.t_void)),
-            (
-                builtin_symbols.s_Print,
+                ps.s_Print,
                 Value::Function {
-                    kind: FunctionKind::Native(builtin_funcs::print),
+                    kind: FnKind::Native(builtin_funcs::print),
                 },
             ),
         ];
@@ -72,7 +63,7 @@ impl Evaluator {
         Self {
             scopes: vec![root_scope, EvalScope::default()],
             functions: vec![],
-            builtin_types: builtin_types,
+            builtin_types: pt,
             const_table,
             heap: Box::new(SimpleHeap::new()),
         }
@@ -166,7 +157,7 @@ impl Evaluator {
     fn eval_call(&mut self, expr: &ir::CallExpr) -> Result<Value, Failure> {
         match self.eval(expr.callee.as_ref())? {
             Value::Function { kind } => match kind {
-                FunctionKind::Native(func) => {
+                FnKind::Native(func) => {
                     let args: Result<Vec<_>, _> =
                         expr.args.iter().map(|arg| self.eval(arg)).collect();
                     args.and_then(|args| {
@@ -181,7 +172,7 @@ impl Evaluator {
                             .map_err(|_| Failure())
                     })
                 }
-                FunctionKind::Verse(func_id) => {
+                FnKind::Verse(func_id) => {
                     let func_expr = &self.functions[func_id.0].clone();
                     self.push_scope();
                     let val = (|| -> Result<Value, Failure> {
@@ -345,11 +336,11 @@ impl Evaluator {
         self.declare(
             expr.slot,
             Value::Function {
-                kind: FunctionKind::Verse(id),
+                kind: FnKind::Verse(id),
             },
         );
         Ok(Value::Function {
-            kind: FunctionKind::Verse(id),
+            kind: FnKind::Verse(id),
         })
     }
 

@@ -1,20 +1,20 @@
 use crate::{
-    core::SymbolTable,
+    core::{SymbolRegistry, types::TypeRegistry},
     lexer::LexerError,
     parser::ParseError,
-    semantic::{SemanticError, TypeRegistry},
+    semantic::SemanticError,
 };
 
 pub fn print_semantic_error(
     err: &SemanticError,
     src: &str,
-    symbol_tbl: &SymbolTable,
+    symbol_tbl: &SymbolRegistry,
     types: &TypeRegistry,
 ) {
     let (span, suffix) = match err {
         SemanticError::Reference { span, symbol } => (
             span,
-            format!("cannot find `{}`", symbol_tbl.resolve(*symbol)),
+            format!("cannot find `{}`", symbol_tbl.lookup(*symbol)),
         ),
         SemanticError::TypeMismatch {
             span,
@@ -30,13 +30,13 @@ pub fn print_semantic_error(
         ),
         SemanticError::TypeNotFound { span, symbol } => (
             span,
-            format!("cannot find type `{}`", symbol_tbl.resolve(*symbol)),
+            format!("cannot find type `{}`", symbol_tbl.lookup(*symbol)),
         ),
         SemanticError::Mutability { span, symbol } => (
             span,
             format!(
                 "cannot reassign immutable variable `{}`",
-                symbol_tbl.resolve(*symbol)
+                symbol_tbl.lookup(*symbol)
             ),
         ),
         SemanticError::ArgsCountMismatch { span } => (span, format!("arguments count mismatch")),
