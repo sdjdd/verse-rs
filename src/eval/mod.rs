@@ -12,7 +12,7 @@ use crate::{
 
 #[derive(Default)]
 struct EvalScope {
-    bindings: Vec<Value>,
+    variables: Vec<Value>,
 }
 
 pub struct Evaluator<THeap: Heap = SimpleHeap> {
@@ -53,10 +53,10 @@ impl Evaluator {
             .collect();
 
         root_values.sort_by(|a, b| a.0.cmp(&b.0));
-        let bindings = root_values.into_iter().map(|(_, v)| v).collect();
+        let variables = root_values.into_iter().map(|(_, v)| v).collect();
 
         let root_scope = EvalScope {
-            bindings,
+            variables,
             ..Default::default()
         };
 
@@ -78,11 +78,11 @@ impl Evaluator {
     }
 
     pub fn declare(&mut self, slot: Slot, value: Value) {
-        let bindings = &mut self.scopes.last_mut().unwrap().bindings;
-        if bindings.len() < slot.0 + 1 {
-            bindings.resize(slot.0 + 1, Value::Void);
+        let variables = &mut self.scopes.last_mut().unwrap().variables;
+        if variables.len() < slot.0 + 1 {
+            variables.resize(slot.0 + 1, Value::Void);
         }
-        bindings[slot.0] = value
+        variables[slot.0] = value
     }
 
     fn fetch_string(&self, id: ObjectId) -> &str {
@@ -107,7 +107,7 @@ impl Evaluator {
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
             ExprKind::Type(e) => Ok(Value::Type(*e)),
             ExprKind::StoreLocal { slot, value } => self.eval_set(*slot, value),
-            ExprKind::LoadUpvalue { depth, slot } => self.eval_get_local(*depth, *slot),
+            ExprKind::LoadUpvalue { depth, slot } => self.eval_load_upvalue(*depth, *slot),
             ExprKind::Binary(expr) => self.eval_binary(expr),
             ExprKind::If(expr) => self.eval_if(expr),
             ExprKind::Template(expr) => self.eval_template(expr),
@@ -139,9 +139,23 @@ impl Evaluator {
         Ok(value)
     }
 
-    fn eval_get_local(&self, up: usize, slot: Slot) -> Result<Value, Failure> {
-        let value = self.scopes.iter().rev().skip(up).next().unwrap().bindings[slot.0];
-        Ok(value)
+    fn eval_load_upvalue(&mut self, depth: usize, slot: Slot) -> Result<Value, Failure> {
+        let value = self
+            .scopes
+            .iter()
+            .rev()
+            .skip(depth)
+            .next()
+            .unwrap()
+            .variables[slot.0];
+
+        Ok(match &value {
+            Value::Option(Some(obj_id)) => {
+                let new_id = self.heap.clone_obj(*obj_id);
+                Value::Option(Some(new_id))
+            }
+            _ => value,
+        })
     }
 
     fn eval_option_value(&mut self, expr_id: Option<&Ir>) -> Result<Value, Failure> {

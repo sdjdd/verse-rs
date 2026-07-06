@@ -1,5 +1,6 @@
 use crate::runtime::Value;
 
+#[derive(Clone)]
 pub enum HeapObj {
     String(String),
     Vec(Vec<Value>),
@@ -12,6 +13,7 @@ pub struct ObjectId(usize);
 pub trait Heap {
     fn alloc_obj(&mut self, obj: HeapObj) -> ObjectId;
     fn fetch_obj(&self, id: ObjectId) -> &HeapObj;
+    fn clone_obj(&mut self, id: ObjectId) -> ObjectId;
 }
 
 #[derive(Default)]
@@ -33,5 +35,10 @@ impl Heap for SimpleHeap {
 
     fn fetch_obj(&self, id: ObjectId) -> &HeapObj {
         &self.arena[id.0]
+    }
+
+    fn clone_obj(&mut self, id: ObjectId) -> ObjectId {
+        let obj = self.fetch_obj(id).clone();
+        self.alloc_obj(obj)
     }
 }

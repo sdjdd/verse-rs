@@ -512,13 +512,16 @@ impl<'src> Parser<'src> {
         let expr = self.make_expr(self.span(), IdExpr::new(symbol));
 
         if self.consume_if(Token::LBrace) {
-            let arg = self.parse_expression()?;
-            self.expect(Token::RBrace)?;
+            let mut args = vec![];
+            while !self.consume_if(Token::RBrace) {
+                args.push(self.parse_expression()?);
+                self.consume_if(Token::Comma);
+            }
             return Ok(Expression {
                 span: expr.span.start..self.span().end,
                 kind: ExprKind::Construct(ConstructExpr {
                     callee: Box::new(expr),
-                    arg: Box::new(arg),
+                    args,
                 }),
             });
         }

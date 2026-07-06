@@ -38,7 +38,7 @@ fn main() {
     if semantic_ctx.errors.is_empty() {
         let mut ctx = Evaluator::new(
             semantic_ctx.builtin_symbols,
-            semantic_ctx.builtin_types,
+            semantic_ctx.predefined_types,
             parser.const_pool.into_table(),
             &semantic_ctx.scopes[0],
         );

@@ -64,7 +64,7 @@ impl Scope {
 
 pub struct SemanticAnalyzer {
     pub builtin_symbols: PredefinedSymbols,
-    pub builtin_types: PredefinedTypes,
+    pub predefined_types: PredefinedTypes,
     pub errors: Vec<SemanticError>,
 
     pub scopes: Vec<Scope>,
@@ -97,7 +97,7 @@ impl SemanticAnalyzer {
         Self {
             scopes: vec![root_scope, Scope::new(0)],
             builtin_symbols: bs,
-            builtin_types: bt,
+            predefined_types: bt,
             errors: vec![],
             types,
         }
@@ -144,7 +144,7 @@ impl SemanticAnalyzer {
     }
 
     fn is_assignable_to(&self, from: TypeId, to: TypeId) -> bool {
-        if from == to || to == self.builtin_types.t_any {
+        if from == to || to == self.predefined_types.t_any {
             return true;
         }
 
@@ -152,11 +152,10 @@ impl SemanticAnalyzer {
         let to = self.types.lookup(to).unwrap();
 
         match (from, to) {
-            (TypeInfo::False, TypeInfo::Option(_)) => return true,
-            _ => {}
+            (TypeInfo::False, TypeInfo::Option(_)) => true,
+            (TypeInfo::Option(from), TypeInfo::Option(to)) => self.is_assignable_to(*from, *to),
+            _ => false,
         }
-
-        false
     }
 
     fn emit_type_mismatch_error(&mut self, span: Span, expect: TypeId, found: TypeId) {
@@ -179,24 +178,24 @@ impl SemanticAnalyzer {
         match &expr.kind {
             ExprKind::Integer(v) => Ir {
                 kind: ir::ExprKind::Int(*v),
-                ty: self.builtin_types.t_int,
+                ty: self.predefined_types.t_int,
             },
             ExprKind::Float(v) => Ir {
                 kind: ir::ExprKind::Float(*v),
-                ty: self.builtin_types.t_float,
+                ty: self.predefined_types.t_float,
             },
             ExprKind::Logic(v) => self.handle_logic_expr(*v),
             ExprKind::Char(v) => Ir {
                 kind: ir::ExprKind::Char(*v),
-                ty: self.builtin_types.t_char,
+                ty: self.predefined_types.t_char,
             },
             ExprKind::Char32(v) => Ir {
                 kind: ir::ExprKind::Char32(*v),
-                ty: self.builtin_types.t_char32,
+                ty: self.predefined_types.t_char32,
             },
             ExprKind::String(v) => Ir {
                 kind: ir::ExprKind::String(*v),
-                ty: self.builtin_types.t_string,
+                ty: self.predefined_types.t_string,
             },
             ExprKind::Decl(e) => self.handle_decl_expr(e.target, e.typ.as_ref(), &e.value, false),
             ExprKind::VarDecl(e) => {
@@ -220,14 +219,14 @@ impl SemanticAnalyzer {
                 }
             }
             ExprKind::Member(expr) => self.handle_member_expr(expr),
-            ExprKind::Construct(expr) => self.handle_construct_expr(expr),
+            ExprKind::Construct(cons_expr) => self.handle_construct_expr(cons_expr),
         }
     }
 
     fn placeholder_ir(&self) -> Ir {
         Ir {
             kind: ir::ExprKind::Nop,
-            ty: self.builtin_types.t_any,
+            ty: self.predefined_types.t_any,
         }
     }
 
@@ -235,12 +234,12 @@ impl SemanticAnalyzer {
         if value {
             Ir {
                 kind: ir::ExprKind::Logic(value),
-                ty: self.builtin_types.t_logic,
+                ty: self.predefined_types.t_logic,
             }
         } else {
             Ir {
                 kind: ir::ExprKind::Logic(value),
-                ty: self.builtin_types.t_false,
+                ty: self.predefined_types.t_false,
             }
         }
     }
@@ -256,7 +255,7 @@ impl SemanticAnalyzer {
 
         let slot = self.declare(name, ty, mutable);
 
-        if value_ir.ty == self.builtin_types.t_false {
+        if value_ir.ty == self.predefined_types.t_false {
             Ir {
                 kind: ir::ExprKind::StoreLocal {
                     slot,
@@ -388,7 +387,7 @@ impl SemanticAnalyzer {
         let type_id = body
             .last()
             .map(|ar| ar.ty)
-            .unwrap_or(self.builtin_types.t_void);
+            .unwrap_or(self.predefined_types.t_void);
 
         Ir {
             kind: ir::ExprKind::Block(body),
@@ -439,7 +438,7 @@ impl SemanticAnalyzer {
 
         Ir {
             kind: ir::ExprKind::Template(elements),
-            ty: self.builtin_types.t_string,
+            ty: self.predefined_types.t_string,
         }
     }
 
@@ -472,7 +471,7 @@ impl SemanticAnalyzer {
             let alt_ir = self.handle_expr(alt);
             self.pop_scope();
             let expr_type = if then_ir.ty != alt_ir.ty {
-                self.builtin_types.t_any
+                self.predefined_types.t_any
             } else {
                 then_ir.ty
             };
@@ -510,7 +509,7 @@ impl SemanticAnalyzer {
 
         let body = self.handle_expr(&expr.body);
 
-        if return_type != self.builtin_types.t_void {
+        if return_type != self.predefined_types.t_void {
             if body.ty != return_type {
                 self.emit_type_mismatch_error(expr.body.span.clone(), return_type, body.ty);
             }
@@ -530,7 +529,7 @@ impl SemanticAnalyzer {
                 slot,
                 params: param_slots,
                 body: body.into(),
-                return_void: return_type == self.builtin_types.t_void,
+                return_void: return_type == self.predefined_types.t_void,
             }),
             ty: type_id,
         }
@@ -588,7 +587,7 @@ impl SemanticAnalyzer {
                         callee: callee_ar.into(),
                         args: arg_hir_ids,
                     }),
-                    ty: self.builtin_types.t_any,
+                    ty: self.predefined_types.t_any,
                 }
             }
             TypeInfo::Tuple(elements) => {
@@ -616,7 +615,7 @@ impl SemanticAnalyzer {
                 }
             }
             TypeInfo::Type(type_id) => self.handle_type_cast(span, &expr.args, type_id),
-            TypeInfo::Int => self.handle_type_cast(span, &expr.args, self.builtin_types.t_int),
+            TypeInfo::Int => self.handle_type_cast(span, &expr.args, self.predefined_types.t_int),
             _ => {
                 self.errors.push(SemanticError::NotCallable {
                     callee: expr.callee.as_ref().clone(),
@@ -634,7 +633,7 @@ impl SemanticAnalyzer {
             lhs.ty
         } else {
             self.emit_type_mismatch_error(span.clone(), lhs.ty, rhs.ty);
-            self.builtin_types.t_any
+            self.predefined_types.t_any
         };
 
         Ir {
@@ -661,7 +660,7 @@ impl SemanticAnalyzer {
                                 expect: "type".to_string(),
                                 found: "value".to_string(),
                             });
-                            return self.builtin_types.t_any;
+                            return self.predefined_types.t_any;
                         }
                     }
                 }
@@ -669,7 +668,7 @@ impl SemanticAnalyzer {
                     span: expr.span.clone(),
                     symbol: *symbol,
                 });
-                self.builtin_types.t_any
+                self.predefined_types.t_any
             })(),
             TypeExprKind::Option(inner) => {
                 let inner = self.handle_type_expr(inner);
@@ -703,12 +702,12 @@ impl SemanticAnalyzer {
     fn handle_member_expr(&mut self, expr: &MemberExpr) -> Ir {
         let obj = self.handle_expr(&expr.object);
 
-        if obj.ty == self.builtin_types.t_string {
+        if obj.ty == self.predefined_types.t_string {
             if let ExprKind::Id(id_expr) = &expr.property.kind {
                 if id_expr.symbol == self.builtin_symbols.s_Length {
                     return Ir {
                         kind: ir::ExprKind::GetLength(obj.into()),
-                        ty: self.builtin_types.t_int,
+                        ty: self.predefined_types.t_int,
                     };
                 }
             }
@@ -717,22 +716,26 @@ impl SemanticAnalyzer {
         self.placeholder_ir()
     }
 
-    fn handle_construct_expr(&mut self, expr: &ConstructExpr) -> Ir {
-        if let ExprKind::Id(id_expr) = &expr.callee.kind {
+    fn handle_construct_expr(&mut self, cons_expr: &ConstructExpr) -> Ir {
+        if let ExprKind::Id(id_expr) = &cons_expr.callee.kind {
             if id_expr.symbol == self.builtin_symbols.s_option {
-                return self.handle_construct_option(&expr.arg);
+                return self.handle_construct_option(cons_expr);
             }
         }
 
         todo!()
     }
 
-    fn handle_construct_option(&mut self, arg: &Expression) -> Ir {
-        let arg = self.handle_expr(arg);
-        let ty = self.types.intern(TypeInfo::Option(arg.ty));
-        Ir {
-            kind: ir::ExprKind::Option(Some(arg.into())),
-            ty,
+    fn handle_construct_option(&mut self, cons_expr: &ConstructExpr) -> Ir {
+        if let Some(value) = cons_expr.args.first() {
+            let value = self.handle_expr(value);
+            let ty = self.types.intern(TypeInfo::Option(value.ty));
+            Ir {
+                kind: ir::ExprKind::Option(Some(value.into())),
+                ty,
+            }
+        } else {
+            self.placeholder_ir()
         }
     }
 }

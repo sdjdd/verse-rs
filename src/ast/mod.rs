@@ -275,5 +275,5 @@ pub struct MemberExpr {
 #[derive(Debug, Clone)]
 pub struct ConstructExpr {
     pub callee: Box<Expression>,
-    pub arg: Box<Expression>,
+    pub args: Vec<Expression>,
 }
