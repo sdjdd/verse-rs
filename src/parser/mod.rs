@@ -40,6 +40,7 @@ pub struct Parser<'src> {
     builtin_symbols: PredefinedSymbols,
 
     pub const_pool: ConstPool,
+    pub errors: Vec<ParseError>,
 }
 
 impl<'src> Parser<'src> {
@@ -55,6 +56,7 @@ impl<'src> Parser<'src> {
             symbol_table: st,
             builtin_symbols,
             const_pool: ConstPool::new(),
+            errors: Vec::new(),
         }
     }
 
@@ -127,14 +129,28 @@ impl<'src> Parser<'src> {
         while self.consume_if(Token::Newline) {}
     }
 
-    pub fn parse(&mut self) -> ParseResult<Program> {
+    pub fn parse(&mut self) -> Program {
         self.skip_newlines();
         let mut expressions = Vec::new();
         while !matches!(self.peek(), Token::EOF) {
-            expressions.push(self.parse_expression()?);
+            match self.parse_expression() {
+                Ok(expr) => expressions.push(expr),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.synchronize();
+                }
+            }
             self.skip_newlines();
         }
-        Ok(Program { expressions })
+        Program { expressions }
+    }
+
+    /// Discard tokens until the next statement boundary. Does not cross a
+    /// `Dedent` so block structure stays aligned for the enclosing block loop.
+    fn synchronize(&mut self) {
+        while !matches!(self.peek(), Token::Newline | Token::Dedent | Token::EOF) {
+            self.next();
+        }
     }
 
     fn parse_expression(&mut self) -> ParseResult<Expression> {
@@ -142,12 +158,7 @@ impl<'src> Parser<'src> {
             Token::If => self.parse_if_expr(),
             Token::Set => self.parse_set_expr(),
             Token::Var => self.parse_var_decl_expr(),
-            Token::Id => {
-                let pos = self.pos;
-                self.parse_function_expr()
-                    .inspect_err(|_| self.pos = pos)
-                    .or_else(|_| self.parse_decl_expr())
-            }
+            Token::Id if self.looks_like_function_signature() => self.parse_function_expr(),
             _ => self.parse_decl_expr(),
         }
     }
@@ -391,15 +402,23 @@ impl<'src> Parser<'src> {
         self.skip_newlines();
         self.expect(Token::Indent)?;
         let start = self.span().end;
-        let mut end = 0;
+        let mut end = start;
         let mut body = Vec::new();
         loop {
             if matches!(self.peek(), Token::Dedent | Token::EOF) {
                 self.next();
                 break;
             }
-            body.push(self.parse_expression()?);
-            end = self.span().end;
+            match self.parse_expression() {
+                Ok(expr) => {
+                    body.push(expr);
+                    end = self.span().end;
+                }
+                Err(e) => {
+                    self.errors.push(e);
+                    self.synchronize();
+                }
+            }
             self.skip_newlines();
         }
         Ok(self.make_expr(start..end, BlockExpr::new(body)))
@@ -433,6 +452,16 @@ impl<'src> Parser<'src> {
         }
 
         Ok(callee)
+    }
+
+    fn looks_like_function_signature(&self) -> bool {
+        if self.peek_n(1) != Token::LParen {
+            return false;
+        }
+        match self.peek_n(2) {
+            Token::Id | Token::RParen => self.peek_n(3) == Token::Colon,
+            _ => false,
+        }
     }
 
     fn parse_function_expr(&mut self) -> ParseResult<Expression> {
@@ -530,19 +559,43 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
-        let expr = match self.next() {
-            Token::IntegerLiteral => self.parse_integer_literal()?,
-            Token::FloatLiteral => self.parse_float_literal()?,
-            Token::CharLiteral => self.parse_char_literal()?,
-            Token::Char32Literal => self.parse_char32_literal()?,
-            Token::True => ExprKind::Logic(true),
-            Token::False => ExprKind::Logic(false),
+        let expr = match self.peek() {
+            Token::IntegerLiteral => {
+                self.next();
+                self.parse_integer_literal()?
+            }
+            Token::FloatLiteral => {
+                self.next();
+                self.parse_float_literal()?
+            }
+            Token::CharLiteral => {
+                self.next();
+                self.parse_char_literal()?
+            }
+            Token::Char32Literal => {
+                self.next();
+                self.parse_char32_literal()?
+            }
+            Token::True => {
+                self.next();
+                ExprKind::Logic(true)
+            }
+            Token::False => {
+                self.next();
+                ExprKind::Logic(false)
+            }
             Token::StringLiteral => {
+                self.next();
                 let s = self.slice();
                 ExprKind::String(self.escape_string_literal(&s[1..s.len() - 1]))
             }
             _ => {
-                return Err(self.unexpected_error());
+                let (token, span) = self
+                    .tokens
+                    .get(self.pos)
+                    .cloned()
+                    .unwrap_or((Token::EOF, 0..0));
+                return Err(ParseError::UnexpectedToken { token, span });
             }
         };
         Ok(self.make_expr(self.span(), expr))
@@ -686,5 +739,89 @@ fn escape_char(ch: char) -> char {
         '#' => '\u{0023}',
         '~' => '\u{007E}',
         _ => ch,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+
+    fn parse_program(src: &str) -> (Program, usize) {
+        let tokens = tokenize(src).unwrap();
+        let mut parser = Parser::new(src, &tokens);
+        let program = parser.parse();
+        (program, parser.errors.len())
+    }
+
+    #[test]
+    fn test_valid_program() {
+        let (program, errs) = parse_program("X := 1\nY := 2");
+        assert_eq!(errs, 0);
+        assert_eq!(program.expressions.len(), 2);
+    }
+
+    #[test]
+    fn test_multiple_errors_top_level() {
+        // Two broken declarations (`X :=` and `Y :=`) followed by a valid one.
+        let (program, errs) = parse_program("X :=\nY :=\nZ := 1");
+        assert_eq!(errs, 2);
+        assert_eq!(program.expressions.len(), 1);
+    }
+
+    #[test]
+    fn test_error_inside_block_recovers() {
+        // A bad line inside the if-block should not abort the block or the
+        // following top-level statement.
+        let src = "if (true):\n    X := 1\n    Y := \n    Z := 3\nW := 4";
+        let (program, errs) = parse_program(src);
+        assert_eq!(errs, 1);
+        assert_eq!(program.expressions.len(), 2);
+    }
+
+    #[test]
+    fn test_call_statement_not_mistaken_for_function() {
+        // `Print("x")` has no `:` after `)`, so it must parse as a call, not a
+        // function definition.
+        let (program, errs) = parse_program("Print(\"x\")");
+        assert_eq!(errs, 0);
+        assert!(matches!(program.expressions[0].kind, ExprKind::Call(_)));
+    }
+
+    #[test]
+    fn test_function_definition_recognized() {
+        // `F():void =` has a `:` after `)`, so it must parse as a function.
+        let src = "F():void =\n    Print(\"x\")";
+        let (program, errs) = parse_program(src);
+        assert_eq!(errs, 0);
+        assert!(matches!(program.expressions[0].kind, ExprKind::Func(_)));
+    }
+
+    #[test]
+    fn test_function_with_typed_params() {
+        let src = "Func(A: int, B: string): void =\n    Print(\"x\")";
+        let (program, errs) = parse_program(src);
+        assert_eq!(
+            errs, 0,
+            "should recognize function signature with typed params"
+        );
+        assert!(matches!(program.expressions[0].kind, ExprKind::Func(_)));
+    }
+
+    #[test]
+    fn test_function_with_multiline_params() {
+        let src = "Func(\n    A: int,\n    B: string\n): void =\n    Print(\"x\")";
+        let (program, errs) = parse_program(src);
+        assert_eq!(errs, 0, "should recognize multi-line function signature");
+        assert!(matches!(program.expressions[0].kind, ExprKind::Func(_)));
+    }
+
+    #[test]
+    fn test_unclosed_paren_recovers() {
+        // `F(X` is missing the closing `)`. The parser should report one error
+        // and still parse the following valid statement.
+        let (program, errs) = parse_program("F(X\nY := 1");
+        assert_eq!(errs, 1);
+        assert_eq!(program.expressions.len(), 1);
     }
 }

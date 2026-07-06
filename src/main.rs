@@ -22,28 +22,27 @@ fn main() {
     let tokens = tokenize(&source).unwrap();
     let mut parser = Parser::new(&source, &tokens);
 
-    let program = parser
-        .parse()
-        .map_err(|err| print_parser_error(&err, &source))
-        .unwrap();
-
-    // println!("{:#?}", program.expressions);
-
-    let mut semantic_ctx = SemanticAnalyzer::new(&mut parser.symbol_table);
-
-    let entry = semantic_ctx.analyze(&program.expressions);
-    for err in &semantic_ctx.errors {
-        print_semantic_error(&err, &source, &parser.symbol_table, &semantic_ctx.types);
+    let program = parser.parse();
+    for err in &parser.errors {
+        print_parser_error(err, &source);
     }
-    if semantic_ctx.errors.is_empty() {
-        let mut ctx = Evaluator::new(
-            semantic_ctx.builtin_symbols,
-            semantic_ctx.predefined_types,
-            parser.const_pool.into_table(),
-            &semantic_ctx.scopes[0],
-        );
-        let mut value = Ok(Value::Void);
-        entry.into_iter().for_each(|ir| value = ctx.eval(&ir));
-        println!("{:?}", value);
+    if parser.errors.is_empty() {
+        let mut semantic_ctx = SemanticAnalyzer::new(&mut parser.symbol_table);
+
+        let entry = semantic_ctx.analyze(&program.expressions);
+        for err in &semantic_ctx.errors {
+            print_semantic_error(&err, &source, &parser.symbol_table, &semantic_ctx.types);
+        }
+        if semantic_ctx.errors.is_empty() {
+            let mut ctx = Evaluator::new(
+                semantic_ctx.builtin_symbols,
+                semantic_ctx.predefined_types,
+                parser.const_pool.into_table(),
+                &semantic_ctx.scopes[0],
+            );
+            let mut value = Ok(Value::Void);
+            entry.into_iter().for_each(|ir| value = ctx.eval(&ir));
+            println!("{:?}", value);
+        }
     }
 }
