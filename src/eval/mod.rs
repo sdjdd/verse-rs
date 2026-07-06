@@ -107,7 +107,7 @@ impl Evaluator {
             ExprKind::Logic(value) => Ok(Value::Logic(*value)),
             ExprKind::Type(e) => Ok(Value::Type(*e)),
             ExprKind::StoreLocal { slot, value } => self.eval_set(*slot, value),
-            ExprKind::LoadUpvalue { depth, slot } => self.eval_load_upvalue(*depth, *slot),
+            ExprKind::LoadLocal { depth, slot } => self.eval_load_upvalue(*depth, *slot),
             ExprKind::Binary(expr) => self.eval_binary(expr),
             ExprKind::If(expr) => self.eval_if(expr),
             ExprKind::Template(expr) => self.eval_template(expr),

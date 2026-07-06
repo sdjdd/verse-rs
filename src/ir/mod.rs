@@ -16,7 +16,7 @@ pub struct Ir {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Nop,
-    LoadUpvalue { depth: usize, slot: Slot },
+    LoadLocal { depth: usize, slot: Slot },
     StoreLocal { slot: Slot, value: Box<Ir> },
     Int(i64),
     Float(f64),

@@ -362,7 +362,7 @@ impl SemanticAnalyzer {
     fn handle_id_expr(&mut self, span: Span, expr: &IdExpr) -> Ir {
         if let Some((depth, &var)) = self.lookup(&expr.symbol) {
             Ir {
-                kind: ir::ExprKind::LoadUpvalue {
+                kind: ir::ExprKind::LoadLocal {
                     depth,
                     slot: var.slot,
                 },
