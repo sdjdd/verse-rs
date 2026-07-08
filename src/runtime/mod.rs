@@ -17,30 +17,39 @@ pub type NativeFunction = fn(ctx: &mut CallContext);
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct FunctionId(pub usize);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum FnKind {
     Native(NativeFunction),
-    Verse(FunctionId),
+    Verse {
+        id: FunctionId,
+        upvalues: Vec<ObjectId>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct TypeId(pub usize);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
 pub enum Value {
+    #[default]
     Void,
     Integer(i64),
     Rational(i64, i64),
     Float(f64),
     Char(u8),
     Char32(char),
-    String(ObjectId),
+    String(String),
     Logic(bool),
-
-    Option(Option<ObjectId>),
-    Tuple { ty: TypeId, oid: ObjectId },
-    Function { kind: FnKind },
+    Option(Option<Box<Value>>),
+    Tuple {
+        ty: TypeId,
+        elements: Vec<Value>,
+    },
+    Function {
+        kind: FnKind,
+    },
     Type(TypeId),
+    Ref(ObjectId),
 }
 
 impl Value {

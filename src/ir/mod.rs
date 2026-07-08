@@ -4,7 +4,7 @@ use crate::{
     runtime::TypeId,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Slot(pub usize);
 
 #[derive(Debug, Clone)]
@@ -16,8 +16,12 @@ pub struct Ir {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Nop,
-    LoadLocal { depth: usize, slot: Slot },
+    LoadGlobal { slot: Slot },
+    StoreGlobal { slot: Slot, value: Box<Ir> },
+    LoadLocal { slot: Slot },
     StoreLocal { slot: Slot, value: Box<Ir> },
+    LoadUpvalue { index: usize },
+    StoreUpvalue { index: usize, value: Box<Ir> },
     Int(i64),
     Float(f64),
     Char(u8),
@@ -78,10 +82,17 @@ pub struct CompareChainExpr {
     pub rest: Vec<(CompareOp, Ir)>,
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum UpvalueDesc {
+    Local(Slot),
+    Upvalue(usize),
+}
+
 #[derive(Debug, Clone)]
 pub struct FunctionExpr {
     pub slot: Slot,
     pub params: Vec<Slot>,
     pub body: Box<Ir>,
     pub return_void: bool,
+    pub upvalues: Vec<UpvalueDesc>,
 }

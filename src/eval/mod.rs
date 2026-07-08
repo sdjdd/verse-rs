@@ -1,26 +1,28 @@
 use crate::{
     ast::{BinaryOperator, CompareOp},
     core::{ConstValue, PredefinedSymbols, types::PredefinedTypes},
-    ir::{self, ExprKind, FunctionExpr, Ir, Slot},
+    ir::{self, ExprKind, FunctionExpr, Ir, Slot, UpvalueDesc},
     runtime::{
         CallContext, Failure, FnKind, FunctionId, TypeId, Value,
         builtin_funcs::{self, write_value},
-        heap::{Heap, HeapObj, ObjectId, SimpleHeap},
+        heap::{Heap, ObjectId, SimpleHeap},
     },
     semantic::Scope,
 };
 
 #[derive(Default)]
-struct EvalScope {
-    variables: Vec<Value>,
+struct CallFrame {
+    base: usize,
+    upvalues: Vec<ObjectId>,
 }
 
 pub struct Evaluator<THeap: Heap = SimpleHeap> {
-    scopes: Vec<EvalScope>,
-    functions: Vec<FunctionExpr>,
-    builtin_types: PredefinedTypes,
+    predefined_types: PredefinedTypes,
     const_table: Vec<ConstValue>,
+    functions: Vec<FunctionExpr>,
     heap: THeap,
+    stack: Vec<Value>,
+    call_frames: Vec<CallFrame>,
 }
 
 impl Evaluator {
@@ -30,7 +32,7 @@ impl Evaluator {
         const_table: Vec<ConstValue>,
         root_scope: &Scope,
     ) -> Self {
-        let root_values = [
+        let global_bindings = [
             (ps.s_int, Value::Type(pt.t_int)),
             (ps.s_float, Value::Type(pt.t_float)),
             (ps.s_logic, Value::Type(pt.t_logic)),
@@ -47,122 +49,146 @@ impl Evaluator {
             ),
         ];
 
-        let mut root_values: Vec<_> = root_values
+        let mut global_vars: Vec<_> = global_bindings
             .into_iter()
             .map(|(symbol, value)| (root_scope.lookup(symbol).unwrap().slot.0, value))
             .collect();
 
-        root_values.sort_by(|a, b| a.0.cmp(&b.0));
-        let variables = root_values.into_iter().map(|(_, v)| v).collect();
-
-        let root_scope = EvalScope {
-            variables,
-            ..Default::default()
-        };
+        global_vars.sort_by(|a, b| a.0.cmp(&b.0));
+        let stack: Vec<_> = global_vars.into_iter().map(|(_, v)| v).collect();
 
         Self {
-            scopes: vec![root_scope, EvalScope::default()],
+            stack,
             functions: vec![],
-            builtin_types: pt,
+            predefined_types: pt,
             const_table,
             heap: SimpleHeap::new(),
+            call_frames: vec![CallFrame::default()],
         }
     }
 
-    fn push_scope(&mut self) {
-        self.scopes.push(EvalScope::default());
+    fn push_frame(&mut self, upvalues: Vec<ObjectId>) {
+        self.call_frames.push(CallFrame {
+            base: self.stack.len(),
+            upvalues,
+        });
     }
 
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
+    fn pop_frames(&mut self) {
+        let frame = self.call_frames.pop().unwrap();
+        self.stack.truncate(frame.base);
+    }
+
+    fn current_frame(&self) -> &CallFrame {
+        self.call_frames.last().unwrap()
+    }
+
+    fn set_stack_value(&mut self, index: usize, value: Value) {
+        if self.stack.len() <= index {
+            self.stack.resize(index + 1, Value::Void);
+        }
+        self.stack[index] = value;
     }
 
     pub fn declare(&mut self, slot: Slot, value: Value) {
-        let variables = &mut self.scopes.last_mut().unwrap().variables;
-        if variables.len() < slot.0 + 1 {
-            variables.resize(slot.0 + 1, Value::Void);
-        }
-        variables[slot.0] = value
+        let index = self.current_frame().base + slot.0;
+        self.set_stack_value(index, value);
     }
 
-    fn fetch_string(&self, id: ObjectId) -> &str {
-        match self.heap.fetch_obj(id) {
-            HeapObj::String(s) => s.as_ref(),
-            _ => panic!("not a string"),
+    fn deref_value(&self, mut value: Value) -> Value {
+        while let Value::Ref(obj_id) = value {
+            value = self.heap.fetch_obj(obj_id).clone();
         }
+        value
     }
 
     pub fn eval(&mut self, expr: &ir::Ir) -> Result<Value, Failure> {
-        match &expr.kind {
-            ExprKind::Nop => Ok(Value::Void),
-            ExprKind::Int(value) => Ok(Value::Integer(*value)),
-            ExprKind::Float(value) => Ok(Value::Float(*value)),
-            ExprKind::Char(value) => Ok(Value::Char(*value)),
-            ExprKind::Char32(value) => Ok(Value::Char32(*value)),
+        let value = match &expr.kind {
+            ExprKind::Nop => Value::Void,
+            ExprKind::Int(value) => Value::Integer(*value),
+            ExprKind::Float(value) => Value::Float(*value),
+            ExprKind::Char(value) => Value::Char(*value),
+            ExprKind::Char32(value) => Value::Char32(*value),
             ExprKind::String(const_id) => {
                 let ConstValue::String(str) = &self.const_table[const_id.0];
-                let id = self.heap.alloc_obj(HeapObj::String(str.clone()));
-                Ok(Value::String(id))
+                Value::String(str.clone())
             }
-            ExprKind::Logic(value) => Ok(Value::Logic(*value)),
-            ExprKind::Type(e) => Ok(Value::Type(*e)),
-            ExprKind::StoreLocal { slot, value } => self.eval_set(*slot, value),
-            ExprKind::LoadLocal { depth, slot } => self.eval_load_upvalue(*depth, *slot),
-            ExprKind::Binary(expr) => self.eval_binary(expr),
-            ExprKind::If(expr) => self.eval_if(expr),
-            ExprKind::Template(expr) => self.eval_template(expr),
-            ExprKind::CompareChain(expr) => self.eval_compare_chain(expr),
-            ExprKind::Tuple(e) => self.eval_tuple(e, expr.ty),
-            ExprKind::Block(expr) => self.eval_block(expr),
-            ExprKind::Func(e) => self.eval_func_expr(e),
-            ExprKind::Call(expr) => self.eval_call(expr),
-            ExprKind::Cast { ty, value } => self.test_value_type(value, *ty),
+            ExprKind::Logic(value) => Value::Logic(*value),
+            ExprKind::Type(e) => Value::Type(*e),
+            ExprKind::LoadGlobal { slot } => self.handle_load_global(*slot)?,
+            ExprKind::StoreGlobal { slot, value } => self.handle_store_global(*slot, value)?,
+            ExprKind::LoadLocal { slot } => self.handle_load_local(*slot)?,
+            ExprKind::StoreLocal { slot, value } => self.handle_store_local(*slot, value)?,
+            ExprKind::LoadUpvalue { index } => self.handle_load_upvalue(*index)?,
+            ExprKind::StoreUpvalue { index, value } => self.handle_store_upvalue(*index, value)?,
+            ExprKind::Binary(expr) => self.eval_binary(expr)?,
+            ExprKind::If(expr) => self.eval_if(expr)?,
+            ExprKind::Template(expr) => self.eval_template(expr)?,
+            ExprKind::CompareChain(expr) => self.eval_compare_chain(expr)?,
+            ExprKind::Tuple(e) => self.eval_tuple(e, expr.ty)?,
+            ExprKind::Block(expr) => self.eval_block(expr)?,
+            ExprKind::Func(e) => self.eval_func_expr(e)?,
+            ExprKind::Call(expr) => self.eval_call(expr)?,
+            ExprKind::Cast { ty, value } => self.test_value_type(value, *ty)?,
             ExprKind::GetTupleElem { tuple, index } => {
-                if let Value::Tuple { oid, .. } = self.eval(&tuple)? {
-                    let elements = match self.heap.fetch_obj(oid) {
-                        HeapObj::Vec(elems) => elems,
-                        _ => panic!("tuple accidently refs a non-vec object"),
-                    };
-                    Ok(elements[*index])
+                if let Value::Tuple { elements, .. } = self.eval(&tuple)? {
+                    elements[*index].clone()
                 } else {
                     panic!("GetTupleElem on a non-tuple value")
                 }
             }
-            ExprKind::GetLength(id) => self.eval_get_length(id),
-            ExprKind::Option(id) => self.eval_option_value(id.as_deref()),
-        }
+            ExprKind::GetLength(id) => self.eval_get_length(id)?,
+            ExprKind::Option(id) => self.eval_option_value(id.as_deref())?,
+        };
+        Ok(self.deref_value(value))
     }
 
-    fn eval_set(&mut self, slot: Slot, value: &Ir) -> Result<Value, Failure> {
+    fn handle_load_global(&self, slot: Slot) -> Result<Value, Failure> {
+        let value = &self.stack[slot.0];
+        Ok(value.clone())
+    }
+
+    fn handle_store_global(&mut self, slot: Slot, value: &Ir) -> Result<Value, Failure> {
         let value = self.eval(value)?;
-        self.declare(slot, value);
+        self.set_stack_value(slot.0, value.clone());
         Ok(value)
     }
 
-    fn eval_load_upvalue(&mut self, depth: usize, slot: Slot) -> Result<Value, Failure> {
-        let value = self
-            .scopes
-            .iter()
-            .rev()
-            .skip(depth)
-            .next()
-            .unwrap()
-            .variables[slot.0];
+    fn handle_load_local(&mut self, slot: Slot) -> Result<Value, Failure> {
+        let index = self.current_frame().base + slot.0;
+        Ok(self.stack[index].clone())
+    }
 
-        Ok(match &value {
-            Value::Option(Some(obj_id)) => {
-                let new_id = self.heap.clone_obj(*obj_id);
-                Value::Option(Some(new_id))
+    fn handle_store_local(&mut self, slot: Slot, value: &Ir) -> Result<Value, Failure> {
+        let value = self.eval(value)?;
+        let index = self.current_frame().base + slot.0;
+        if index < self.stack.len() {
+            if let Value::Ref(obj_id) = self.stack[index] {
+                self.heap.update_obj(obj_id, value.clone());
+                return Ok(value);
             }
-            _ => value,
-        })
+        }
+        self.set_stack_value(index, value.clone());
+        Ok(value)
+    }
+
+    fn handle_load_upvalue(&self, index: usize) -> Result<Value, Failure> {
+        let obj_id = self.current_frame().upvalues[index];
+        let value = self.heap.fetch_obj(obj_id).clone();
+        Ok(value)
+    }
+
+    fn handle_store_upvalue(&mut self, index: usize, value: &Ir) -> Result<Value, Failure> {
+        let value = self.eval(value)?;
+        let obj_id = self.current_frame().upvalues[index];
+        self.heap.update_obj(obj_id, value.clone());
+        Ok(value)
     }
 
     fn eval_option_value(&mut self, expr_id: Option<&Ir>) -> Result<Value, Failure> {
         if let Some(id) = expr_id {
             let value = self.eval(id)?;
-            let obj_id = self.heap.alloc_obj(HeapObj::Value(value));
-            Ok(Value::Option(Some(obj_id)))
+            Ok(Value::Option(Some(value.into())))
         } else {
             Ok(Value::Option(None))
         }
@@ -186,12 +212,14 @@ impl Evaluator {
                             .map_err(|_| Failure())
                     })
                 }
-                FnKind::Verse(func_id) => {
-                    let func_expr = &self.functions[func_id.0].clone();
-                    self.push_scope();
-                    let val = (|| -> Result<Value, Failure> {
-                        for (param, arg) in func_expr.params.iter().zip(expr.args.iter()) {
-                            let arg = self.eval(arg)?;
+                FnKind::Verse { id, upvalues } => {
+                    let func_expr = &self.functions[id.0].clone();
+                    let args: Result<Vec<_>, _> =
+                        expr.args.iter().map(|arg| self.eval(arg)).collect();
+                    let args = args?;
+                    self.push_frame(upvalues);
+                    let value = (|| -> Result<Value, Failure> {
+                        for (param, arg) in func_expr.params.iter().zip(args.into_iter()) {
                             self.declare(*param, arg);
                         }
                         let ret_val = self.eval(func_expr.body.as_ref())?;
@@ -201,8 +229,8 @@ impl Evaluator {
                             ret_val
                         })
                     })();
-                    self.pop_scope();
-                    val
+                    self.pop_frames();
+                    value
                 }
             },
             _ => panic!("callee is not callable"),
@@ -212,7 +240,7 @@ impl Evaluator {
     fn test_value_type(&mut self, value: &Ir, type_id: TypeId) -> Result<Value, Failure> {
         let value = self.eval(value)?;
         let ok = match &value {
-            Value::Integer(_) => type_id == self.builtin_types.t_int,
+            Value::Integer(_) => type_id == self.predefined_types.t_int,
             Value::Tuple { ty, .. } => *ty == type_id,
             _ => false,
         };
@@ -275,14 +303,12 @@ impl Evaluator {
             })
             .collect();
 
-        let elems = elems?;
-        let id = self.heap.alloc_obj(HeapObj::String(elems.concat()));
-        Ok(Value::String(id))
+        Ok(Value::String(elems?.concat()))
     }
 
     fn eval_compare_chain(&mut self, expr: &ir::CompareChainExpr) -> Result<Value, Failure> {
         let leftmost = self.eval(&expr.head)?;
-        let mut prev = leftmost;
+        let mut prev = leftmost.clone();
 
         for (op, expr) in &expr.rest {
             let current = self.eval(expr)?;
@@ -328,9 +354,10 @@ impl Evaluator {
 
     fn eval_tuple(&mut self, elements: &[Ir], ty: TypeId) -> Result<Value, Failure> {
         let elems: Result<Vec<_>, _> = elements.iter().map(|el| self.eval(el)).collect();
-        let elems = elems?;
-        let oid = self.heap.alloc_obj(HeapObj::Vec(elems));
-        Ok(Value::Tuple { ty, oid })
+        Ok(Value::Tuple {
+            ty,
+            elements: elems?,
+        })
     }
 
     fn eval_block(&mut self, expr_ids: &[Ir]) -> Result<Value, Failure> {
@@ -347,25 +374,42 @@ impl Evaluator {
     fn eval_func_expr(&mut self, expr: &ir::FunctionExpr) -> Result<Value, Failure> {
         let id = FunctionId(self.functions.len());
         self.functions.push(expr.clone());
-        self.declare(
-            expr.slot,
-            Value::Function {
-                kind: FnKind::Verse(id),
-            },
-        );
-        Ok(Value::Function {
-            kind: FnKind::Verse(id),
-        })
+
+        let base = self.current_frame().base;
+        let upvalues: Vec<ObjectId> = expr
+            .upvalues
+            .iter()
+            .map(|desc| match desc {
+                UpvalueDesc::Local(slot) => {
+                    let index = base + slot.0;
+                    match &self.stack[index] {
+                        Value::Ref(obj_id) => *obj_id,
+                        _ => {
+                            let value = std::mem::take(&mut self.stack[index]);
+                            let obj_id = self.heap.alloc_obj(value);
+                            self.stack[index] = Value::Ref(obj_id);
+                            obj_id
+                        }
+                    }
+                }
+                UpvalueDesc::Upvalue(index) => self.current_frame().upvalues[*index],
+            })
+            .collect();
+
+        let func = Value::Function {
+            kind: FnKind::Verse { id, upvalues },
+        };
+
+        self.declare(expr.slot, func.clone());
+
+        Ok(func)
     }
 
     fn eval_get_length(&mut self, value: &Ir) -> Result<Value, Failure> {
         let value = self.eval(value)?;
         match value {
-            Value::String(oid) => {
-                let len = self.fetch_string(oid).len();
-                Ok(Value::Integer(len as i64))
-            }
-            _ => panic!("cannot get lenght of non string value"),
+            Value::String(str) => Ok(Value::Integer(str.len() as i64)),
+            _ => panic!("unsupported GetLength target"),
         }
     }
 }

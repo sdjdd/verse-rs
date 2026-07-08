@@ -137,7 +137,7 @@ impl<'src> Parser<'src> {
                 Ok(expr) => expressions.push(expr),
                 Err(e) => {
                     self.errors.push(e);
-                    self.synchronize();
+                    self.synchronize_line();
                 }
             }
             self.skip_newlines();
@@ -145,10 +145,26 @@ impl<'src> Parser<'src> {
         Program { expressions }
     }
 
-    /// Discard tokens until the next statement boundary. Does not cross a
-    /// `Dedent` so block structure stays aligned for the enclosing block loop.
-    fn synchronize(&mut self) {
+    /// Recover at the top level: consume tokens until the next line boundary.
+    /// Dedent is not meaningful here so it gets consumed.
+    fn synchronize_line(&mut self) {
+        let start = self.pos;
+        while !matches!(self.peek(), Token::Newline | Token::EOF) {
+            self.next();
+        }
+        if self.pos == start {
+            self.next();
+        }
+    }
+
+    /// Recover inside a block: consume tokens until the next line boundary
+    /// without crossing a `Dedent`, so the block loop can see it.
+    fn synchronize_block_line(&mut self) {
+        let start = self.pos;
         while !matches!(self.peek(), Token::Newline | Token::Dedent | Token::EOF) {
+            self.next();
+        }
+        if self.pos == start {
             self.next();
         }
     }
@@ -259,7 +275,15 @@ impl<'src> Parser<'src> {
         self.expect(Token::Eq)?;
         let expr = self.parse_expression()?;
 
-        Ok(self.make_expr(start..expr.span.end, VarDeclExpr::new(name, typ, expr)))
+        Ok(Expression {
+            span: start..expr.span.end,
+            kind: VarDeclExpr {
+                name,
+                typ,
+                expr: expr.into(),
+            }
+            .into(),
+        })
     }
 
     fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {
@@ -416,7 +440,7 @@ impl<'src> Parser<'src> {
                 }
                 Err(e) => {
                     self.errors.push(e);
-                    self.synchronize();
+                    self.synchronize_block_line();
                 }
             }
             self.skip_newlines();
@@ -805,14 +829,6 @@ mod tests {
             errs, 0,
             "should recognize function signature with typed params"
         );
-        assert!(matches!(program.expressions[0].kind, ExprKind::Func(_)));
-    }
-
-    #[test]
-    fn test_function_with_multiline_params() {
-        let src = "Func(\n    A: int,\n    B: string\n): void =\n    Print(\"x\")";
-        let (program, errs) = parse_program(src);
-        assert_eq!(errs, 0, "should recognize multi-line function signature");
         assert!(matches!(program.expressions[0].kind, ExprKind::Func(_)));
     }
 

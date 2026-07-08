@@ -1,9 +1,6 @@
 use std::fmt::Write;
 
-use crate::runtime::{
-    CallContext, Value,
-    heap::{Heap, HeapObj},
-};
+use crate::runtime::{CallContext, Value, heap::Heap};
 
 pub fn write_value(
     w: &mut impl Write,
@@ -12,15 +9,11 @@ pub fn write_value(
     quate_string: bool,
 ) -> Result<(), std::fmt::Error> {
     match value {
-        Value::String(id) => {
-            if let HeapObj::String(str) = heap.fetch_obj(*id) {
-                if quate_string {
-                    write!(w, "\"{}\"", str)
-                } else {
-                    write!(w, "{}", str)
-                }
+        Value::String(str) => {
+            if quate_string {
+                write!(w, "\"{}\"", str)
             } else {
-                unreachable!()
+                write!(w, "{}", str)
             }
         }
         Value::Void => Ok(()),
@@ -30,23 +23,20 @@ pub fn write_value(
         Value::Float(value) => write!(w, "{}", value),
         Value::Char(value) => write!(w, "{}", *value as char),
         Value::Char32(value) => write!(w, "{}", value),
-        Value::Tuple { oid, .. } => {
-            if let HeapObj::Vec(elements) = heap.fetch_obj(*oid) {
-                write!(w, "(")?;
-                for (i, v) in elements.iter().enumerate() {
-                    if i > 0 {
-                        write!(w, ", ")?;
-                    }
-                    write_value(w, heap, v, true)?;
+        Value::Tuple { elements, .. } => {
+            write!(w, "(")?;
+            for (i, v) in elements.iter().enumerate() {
+                if i > 0 {
+                    write!(w, ", ")?;
                 }
-                write!(w, ")")
-            } else {
-                unreachable!()
+                write_value(w, heap, v, true)?;
             }
+            write!(w, ")")
         }
         Value::Function { .. } => write!(w, "[Function]"),
         Value::Type { .. } => write!(w, "[Type]"),
         Value::Option(_) => write!(w, "[Option]"),
+        Value::Ref(id) => write!(w, "[Ref({})]", id.0),
     }
 }
 

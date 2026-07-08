@@ -1,3 +1,4 @@
+use ordermap::OrderSet;
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -7,30 +8,41 @@ use crate::{
         PredefinedSymbols, Symbol, SymbolRegistry,
         types::{PredefinedTypes, TypeInfo, TypeRegistry},
     },
-    ir::{self, Ir, Slot},
+    ir::{self, Ir, Slot, UpvalueDesc},
     lexer::Span,
     runtime::TypeId,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Variable {
     pub slot: Slot,
     pub type_id: TypeId,
     pub mutable: bool,
 }
 
+struct LookupResult {
+    is_global: bool,
+    is_upvalue: bool,
+    slot: Slot,
+    type_id: TypeId,
+    mutable: bool,
+    scope_index: usize,
+}
+
 pub struct Scope {
-    own_slots: bool,
+    is_function: bool,
     next_slot: usize,
     variables: HashMap<Symbol, Variable>,
+    upvalues: OrderSet<UpvalueDesc>,
 }
 
 impl Scope {
-    fn new(next_slot: usize) -> Self {
+    fn new(is_function: bool) -> Self {
         Self {
-            own_slots: next_slot == 0,
-            next_slot,
+            is_function,
+            next_slot: 0,
             variables: HashMap::new(),
+            upvalues: OrderSet::new(),
         }
     }
 
@@ -56,10 +68,6 @@ impl Scope {
     pub fn lookup(&self, symbol: Symbol) -> Option<&Variable> {
         self.variables.get(&symbol)
     }
-
-    pub fn lookup_slot(&self, symbol: Symbol) -> Slot {
-        self.variables.get(&symbol).unwrap().slot
-    }
 }
 
 pub struct SemanticAnalyzer {
@@ -73,7 +81,7 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new(symbol_table: &mut SymbolRegistry) -> Self {
-        let mut root_scope = Scope::new(0);
+        let mut global_scope = Scope::new(false);
         let mut types = TypeRegistry::default();
 
         let bs = PredefinedSymbols::install(symbol_table);
@@ -90,12 +98,13 @@ impl SemanticAnalyzer {
             (bs.s_void, TypeInfo::Type(bt.t_void)),
             (bs.s_Print, TypeInfo::Any),
         ];
+
         for (s, t) in predefined_vars {
-            root_scope.declare(s, types.intern(t), false);
+            global_scope.declare(s, types.intern(t), false);
         }
 
         Self {
-            scopes: vec![root_scope, Scope::new(0)],
+            scopes: vec![global_scope],
             builtin_symbols: bs,
             predefined_types: bt,
             errors: vec![],
@@ -103,25 +112,15 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn push_scope(&mut self, own_slots: bool) {
-        let scope = if own_slots {
-            Scope::new(0)
-        } else {
-            let next_slot = self.scopes.last().unwrap().next_slot;
-            Scope::new(next_slot)
-        };
-        self.scopes.push(scope);
+    fn push_scope(&mut self, is_function: bool) {
+        self.scopes.push(Scope::new(is_function));
     }
 
-    fn pop_scope(&mut self) {
+    fn pop_scope(&mut self) -> Scope {
         if self.scopes.len() == 1 {
-            // preserve root scope
-            return;
+            panic!("cannot pop global scope!");
         }
-        let scope = self.scopes.pop().unwrap();
-        if !scope.own_slots {
-            self.scopes.last_mut().unwrap().next_slot = scope.next_slot;
-        }
+        self.scopes.pop().unwrap()
     }
 
     pub fn declare(&mut self, symbol: Symbol, type_id: TypeId, mutable: bool) -> Slot {
@@ -132,15 +131,38 @@ impl SemanticAnalyzer {
             .declare(symbol, type_id, mutable)
     }
 
-    fn lookup(&mut self, symbol: &Symbol) -> Option<(usize, &Variable)> {
-        let mut depth = 0;
-        for scope in self.scopes.iter().rev() {
+    fn lookup(&mut self, symbol: &Symbol) -> Option<LookupResult> {
+        let mut captured = false;
+        for (index, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(var) = scope.lookup(*symbol) {
-                return Some((depth, var));
+                let res = LookupResult {
+                    is_global: index == 0,
+                    is_upvalue: captured,
+                    slot: var.slot,
+                    type_id: var.type_id,
+                    mutable: var.mutable,
+                    scope_index: index,
+                };
+                return Some(res);
             }
-            depth += 1
+            if scope.is_function {
+                captured = true
+            }
         }
         None
+    }
+
+    fn capture(&mut self, scope_index: usize, slot: Slot) -> usize {
+        let mut parent_index = None;
+        for scope in self.scopes.iter_mut().skip(scope_index + 1) {
+            let desc = if let Some(index) = parent_index {
+                UpvalueDesc::Upvalue(index)
+            } else {
+                UpvalueDesc::Local(slot)
+            };
+            parent_index = Some(scope.upvalues.insert_full(desc).0);
+        }
+        parent_index.unwrap()
     }
 
     fn is_assignable_to(&self, from: TypeId, to: TypeId) -> bool {
@@ -327,7 +349,7 @@ impl SemanticAnalyzer {
 
         match &expr.target.kind {
             LValueKind::Id(id_expr) => {
-                if let Some((depth, &var)) = self.lookup(&id_expr.symbol) {
+                if let Some(var) = self.lookup(&id_expr.symbol) {
                     if var.type_id != value_type {
                         self.emit_type_mismatch_error(
                             expr.expr.span.clone(),
@@ -341,16 +363,30 @@ impl SemanticAnalyzer {
                             symbol: id_expr.symbol,
                         })
                     }
-                    if depth == 0 {
+                    if var.is_global {
                         Ir {
-                            kind: ir::ExprKind::StoreLocal {
+                            kind: ir::ExprKind::StoreGlobal {
                                 slot: var.slot,
-                                value: Box::new(value_ir),
+                                value: value_ir.into(),
+                            },
+                            ty: var.type_id,
+                        }
+                    } else if var.is_upvalue {
+                        Ir {
+                            kind: ir::ExprKind::StoreUpvalue {
+                                index: self.capture(var.scope_index, var.slot),
+                                value: value_ir.into(),
                             },
                             ty: var.type_id,
                         }
                     } else {
-                        todo!("StoreUpvalue")
+                        Ir {
+                            kind: ir::ExprKind::StoreLocal {
+                                slot: var.slot,
+                                value: value_ir.into(),
+                            },
+                            ty: var.type_id,
+                        }
                     }
                 } else {
                     self.placeholder_ir()
@@ -360,13 +396,23 @@ impl SemanticAnalyzer {
     }
 
     fn handle_id_expr(&mut self, span: Span, expr: &IdExpr) -> Ir {
-        if let Some((depth, &var)) = self.lookup(&expr.symbol) {
-            Ir {
-                kind: ir::ExprKind::LoadLocal {
-                    depth,
-                    slot: var.slot,
-                },
-                ty: var.type_id,
+        if let Some(var) = self.lookup(&expr.symbol) {
+            if var.is_global {
+                Ir {
+                    kind: ir::ExprKind::LoadGlobal { slot: var.slot },
+                    ty: var.type_id,
+                }
+            } else if var.is_upvalue {
+                let index = self.capture(var.scope_index, var.slot);
+                Ir {
+                    kind: ir::ExprKind::LoadUpvalue { index },
+                    ty: var.type_id,
+                }
+            } else {
+                Ir {
+                    kind: ir::ExprKind::LoadLocal { slot: var.slot },
+                    ty: var.type_id,
+                }
             }
         } else {
             self.errors.push(SemanticError::Reference {
@@ -510,7 +556,7 @@ impl SemanticAnalyzer {
         let body = self.handle_expr(&expr.body);
 
         if return_type != self.predefined_types.t_void {
-            if body.ty != return_type {
+            if !self.is_assignable_to(body.ty, return_type) {
                 self.emit_type_mismatch_error(expr.body.span.clone(), return_type, body.ty);
             }
         }
@@ -520,16 +566,17 @@ impl SemanticAnalyzer {
             ret: return_type,
         });
 
-        self.pop_scope();
-
-        let slot = self.declare(expr.name, type_id, false);
+        let scope = self.pop_scope();
+        let upvalues = scope.upvalues.into_iter().collect();
+        let func_slot = self.declare(expr.name, type_id, false);
 
         Ir {
             kind: ir::ExprKind::Func(ir::FunctionExpr {
-                slot,
+                slot: func_slot,
                 params: param_slots,
                 body: body.into(),
                 return_void: return_type == self.predefined_types.t_void,
+                upvalues,
             }),
             ty: type_id,
         }
@@ -649,7 +696,7 @@ impl SemanticAnalyzer {
     fn handle_type_expr(&mut self, expr: &TypeExpr) -> TypeId {
         let type_id = match &expr.kind {
             TypeExprKind::Named(symbol) => (|| -> TypeId {
-                if let Some((_, &binding)) = self.lookup(symbol) {
+                if let Some(binding) = self.lookup(symbol) {
                     let type_id = binding.type_id;
                     if let Some(ty) = self.types.lookup(type_id) {
                         if let TypeInfo::Type(inner_type) = ty {

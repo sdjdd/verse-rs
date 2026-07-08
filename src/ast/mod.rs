@@ -123,16 +123,6 @@ pub struct VarDeclExpr {
     pub expr: Box<Expression>,
 }
 
-impl VarDeclExpr {
-    pub fn new(name: IdExpr, typ: TypeExpr, expr: Expression) -> Self {
-        Self {
-            name,
-            typ,
-            expr: expr.into(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct CallExpr {
     pub callee: Box<Expression>,
