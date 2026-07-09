@@ -175,6 +175,8 @@ impl<'src> Parser<'src> {
             Token::Set => self.parse_set_expr(),
             Token::Var => self.parse_var_decl_expr(),
             Token::Id if self.looks_like_function_signature() => self.parse_function_expr(),
+            Token::Loop => self.parse_loop_expr(),
+            Token::Break => self.parse_break_expr(),
             _ => self.parse_decl_expr(),
         }
     }
@@ -444,6 +446,26 @@ impl<'src> Parser<'src> {
             .unwrap_or(consequent.span.end);
 
         Ok(self.make_expr(start..end, IfExpr::new(test, consequent, alternate)))
+    }
+
+    fn parse_loop_expr(&mut self) -> ParseResult {
+        self.expect(Token::Loop)?;
+        let start = self.span().start;
+        self.expect(Token::Colon)?;
+        self.expect(Token::Newline)?;
+        let body = self.parse_block_expr()?;
+        Ok(Expression {
+            span: start..body.span.end,
+            kind: ExprKind::Loop(body.into()),
+        })
+    }
+
+    fn parse_break_expr(&mut self) -> ParseResult {
+        self.expect(Token::Break)?;
+        Ok(Expression {
+            span: self.span().clone(),
+            kind: ExprKind::Break,
+        })
     }
 
     fn parse_block_expr(&mut self) -> ParseResult<Expression> {

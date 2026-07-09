@@ -133,6 +133,12 @@ pub enum Token {
     #[token("else")]
     Else,
 
+    #[token("loop")]
+    Loop,
+
+    #[token("break")]
+    Break,
+
     #[token("set")]
     Set,
 

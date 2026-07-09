@@ -27,6 +27,8 @@ pub enum ExprKind {
     Binary(BinaryExpr),
     Unary(UnaryExpr),
     If(IfExpr),
+    Loop(Box<Expression>),
+    Break,
     Template(TemplateExpression),
     CompareChain(CompareChainExpr),
     Tuple(TupleExpr),

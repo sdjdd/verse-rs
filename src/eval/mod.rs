@@ -23,6 +23,7 @@ pub struct Evaluator<THeap: Heap = SimpleHeap> {
     heap: THeap,
     stack: Vec<Value>,
     call_frames: Vec<CallFrame>,
+    break_flag: bool,
 }
 
 impl Evaluator {
@@ -64,6 +65,7 @@ impl Evaluator {
             const_table,
             heap: SimpleHeap::new(),
             call_frames: vec![CallFrame::default()],
+            break_flag: false,
         }
     }
 
@@ -125,6 +127,8 @@ impl Evaluator {
             ExprKind::Neg(expr) => -(self.eval(expr)?),
             ExprKind::Not(ir) => self.handle_not(ir)?,
             ExprKind::If(expr) => self.eval_if(expr)?,
+            ExprKind::Loop(ir) => self.eval_loop(ir)?,
+            ExprKind::Break => self.eval_break(),
             ExprKind::Template(expr) => self.eval_template(expr)?,
             ExprKind::CompareChain(expr) => self.eval_compare_chain(expr)?,
             ExprKind::Tuple(e) => self.eval_tuple(e, expr.ty)?,
@@ -289,12 +293,29 @@ impl Evaluator {
             }
         } else {
             if let Some(alternate) = &expr.alt {
-                // TODO: optional
-                self.eval(alternate)
+                let value = self.eval(alternate)?;
+                Ok(Value::Option(Some(value.into())))
             } else {
-                Err(Failure())
+                Ok(Value::Option(None))
             }
         }
+    }
+
+    fn eval_loop(&mut self, ir: &Ir) -> Result<Value, Failure> {
+        self.break_flag = false;
+        loop {
+            self.eval(ir)?;
+            if self.break_flag {
+                self.break_flag = false;
+                break;
+            }
+        }
+        Ok(Value::Logic(true))
+    }
+
+    fn eval_break(&mut self) -> Value {
+        self.break_flag = true;
+        Value::Void
     }
 
     fn eval_template(&mut self, elements: &[ir::TemplateElement]) -> Result<Value, Failure> {

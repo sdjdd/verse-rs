@@ -9,6 +9,7 @@ pub enum TypeInfo {
     Int,
     Float,
     Rational,
+    True,
     False,
     Logic,
     Char,
@@ -20,6 +21,8 @@ pub enum TypeInfo {
     Function { params: Vec<TypeId>, ret: TypeId },
 
     Type(TypeId),
+
+    Bottom,
 }
 
 #[derive(Default)]
@@ -51,6 +54,7 @@ impl TypeRegistry {
 
 pub struct PredefinedTypes {
     pub t_any: TypeId,
+    pub t_bottom: TypeId,
     pub t_char: TypeId,
     pub t_char32: TypeId,
     pub t_false: TypeId,
@@ -59,6 +63,7 @@ pub struct PredefinedTypes {
     pub t_logic: TypeId,
     pub t_rational: TypeId,
     pub t_string: TypeId,
+    pub t_true: TypeId,
     pub t_void: TypeId,
 }
 
@@ -66,6 +71,7 @@ impl PredefinedTypes {
     pub fn install(reg: &mut TypeRegistry) -> Self {
         Self {
             t_any: reg.intern(TypeInfo::Any),
+            t_bottom: reg.intern(TypeInfo::Bottom),
             t_char: reg.intern(TypeInfo::Char),
             t_char32: reg.intern(TypeInfo::Char32),
             t_false: reg.intern(TypeInfo::False),
@@ -74,6 +80,7 @@ impl PredefinedTypes {
             t_logic: reg.intern(TypeInfo::Logic),
             t_rational: reg.intern(TypeInfo::Rational),
             t_string: reg.intern(TypeInfo::String),
+            t_true: reg.intern(TypeInfo::True),
             t_void: reg.intern(TypeInfo::Void),
         }
     }

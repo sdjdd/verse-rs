@@ -70,6 +70,8 @@ impl Scope {
     }
 }
 
+struct LoopInfo {}
+
 pub struct SemanticAnalyzer {
     pub builtin_symbols: PredefinedSymbols,
     pub predefined_types: PredefinedTypes,
@@ -77,6 +79,8 @@ pub struct SemanticAnalyzer {
 
     pub scopes: Vec<Scope>,
     pub types: TypeRegistry,
+
+    loop_stack: Vec<LoopInfo>,
 }
 
 impl SemanticAnalyzer {
@@ -109,6 +113,7 @@ impl SemanticAnalyzer {
             predefined_types: bt,
             errors: vec![],
             types,
+            loop_stack: vec![],
         }
     }
 
@@ -174,10 +179,19 @@ impl SemanticAnalyzer {
         let to = self.types.lookup(to).unwrap();
 
         match (from, to) {
+            (TypeInfo::True | TypeInfo::False, TypeInfo::Logic) => true,
             (TypeInfo::False, TypeInfo::Option(_)) => true,
             (TypeInfo::Option(from), TypeInfo::Option(to)) => self.is_assignable_to(*from, *to),
             _ => false,
         }
+    }
+
+    fn push_loop(&mut self) {
+        self.loop_stack.push(LoopInfo {});
+    }
+
+    fn pop_loop(&mut self) {
+        self.loop_stack.pop();
     }
 
     fn emit_type_mismatch_error(&mut self, span: Span, expect: TypeId, found: TypeId) {
@@ -230,6 +244,8 @@ impl SemanticAnalyzer {
             ExprKind::Template(e) => self.handle_template_expr(e),
             ExprKind::Tuple(e) => self.handle_tuple_expr(e),
             ExprKind::If(e) => self.handle_if_expr(e),
+            ExprKind::Loop(body) => self.handle_loop_expr(body),
+            ExprKind::Break => self.handle_break_expr(expr),
             ExprKind::Func(e) => self.handle_func_expr(e),
             ExprKind::Call(e) => self.handle_call_expr(expr.span.clone(), e),
             ExprKind::Binary(e) => self.handle_binary_expr(expr.span.clone(), e),
@@ -534,6 +550,31 @@ impl SemanticAnalyzer {
                 alt: alt_ar.map(|ar| ar.into()),
             }),
             ty: expr_type,
+        }
+    }
+
+    fn handle_loop_expr(&mut self, body: &Expression) -> Ir {
+        self.push_loop();
+        let body_ir = self.handle_expr(body);
+        let ir = Ir {
+            ty: self.predefined_types.t_true,
+            kind: ir::ExprKind::Loop(body_ir.into()),
+        };
+        self.pop_loop();
+        ir
+    }
+
+    fn handle_break_expr(&mut self, expr: &Expression) -> Ir {
+        if self.loop_stack.is_empty() {
+            self.errors.push(SemanticError::BreakOutsideLoop {
+                span: expr.span.clone(),
+            });
+            self.placeholder_ir()
+        } else {
+            Ir {
+                ty: self.predefined_types.t_bottom,
+                kind: ir::ExprKind::Break,
+            }
         }
     }
 
@@ -864,4 +905,7 @@ pub enum SemanticError {
 
     #[error("type error")]
     TypeError { span: Span, kind: TypeError },
+
+    #[error("'break' is not allowed outside of a loop")]
+    BreakOutsideLoop { span: Span },
 }

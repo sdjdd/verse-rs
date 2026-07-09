@@ -35,6 +35,8 @@ pub enum ExprKind {
     Neg(Box<Ir>),
     Not(Box<Ir>),
     If(IfExpr),
+    Loop(Box<Ir>),
+    Break,
     Template(Vec<TemplateElement>),
     CompareChain(CompareChainExpr),
     Tuple(Vec<Ir>),
