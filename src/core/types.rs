@@ -52,6 +52,7 @@ impl TypeRegistry {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct PredefinedTypes {
     pub t_any: TypeId,
     pub t_bottom: TypeId,

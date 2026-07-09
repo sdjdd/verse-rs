@@ -2,12 +2,12 @@ use std::env;
 use std::fs;
 use std::io::{self, Read};
 
+use verse::compiler::Compiler;
 use verse::debug::{print_parser_error, print_semantic_error};
-use verse::eval::Evaluator;
 use verse::lexer::tokenize;
 use verse::parser::Parser;
-use verse::runtime::Value;
 use verse::semantic::SemanticAnalyzer;
+use verse::vm::Vm;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -34,14 +34,15 @@ fn main() {
             print_semantic_error(&err, &source, &parser.symbol_table, &semantic_ctx.types);
         }
         if semantic_ctx.errors.is_empty() {
-            let mut ctx = Evaluator::new(
-                semantic_ctx.builtin_symbols,
-                semantic_ctx.predefined_types,
+            let funcs = Compiler::default().compile(entry);
+            let mut vm = Vm::new(
                 parser.const_pool.into_table(),
-                &semantic_ctx.scopes[0],
+                semantic_ctx.get_global_vars(),
+                semantic_ctx.predefined_types,
             );
-            let mut value = Ok(Value::Void);
-            entry.into_iter().for_each(|ir| value = ctx.eval(&ir));
+            let main = funcs.len() - 1;
+            vm.functions = funcs;
+            let value = vm.run(main);
             println!("{:?}", value);
         }
     }

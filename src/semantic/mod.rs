@@ -10,7 +10,7 @@ use crate::{
     },
     ir::{self, Ir, Slot, UpvalueDesc},
     lexer::Span,
-    runtime::TypeId,
+    runtime::{FnKind, TypeId, Value, builtin_funcs},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -117,6 +117,36 @@ impl SemanticAnalyzer {
         }
     }
 
+    pub fn get_global_vars(&self) -> Vec<Value> {
+        let ps = self.builtin_symbols;
+        let pt = self.predefined_types;
+
+        let global_bindings = [
+            (ps.s_int, Value::Type(pt.t_int)),
+            (ps.s_float, Value::Type(pt.t_float)),
+            (ps.s_logic, Value::Type(pt.t_logic)),
+            (ps.s_char, Value::Type(pt.t_char)),
+            (ps.s_char32, Value::Type(pt.t_char32)),
+            (ps.s_string, Value::Type(pt.t_string)),
+            (ps.s_any, Value::Type(pt.t_any)),
+            (ps.s_void, Value::Type(pt.t_void)),
+            (
+                ps.s_Print,
+                Value::Function {
+                    kind: FnKind::Native(builtin_funcs::print),
+                },
+            ),
+        ];
+
+        let mut global_vars: Vec<_> = global_bindings
+            .into_iter()
+            .map(|(symbol, value)| (self.scopes[0].lookup(symbol).unwrap().slot.0, value))
+            .collect();
+
+        global_vars.sort_by(|a, b| a.0.cmp(&b.0));
+        global_vars.into_iter().map(|(_, v)| v).collect()
+    }
+
     fn push_scope(&mut self, is_function: bool) {
         self.scopes.push(Scope::new(is_function));
     }
@@ -141,7 +171,7 @@ impl SemanticAnalyzer {
         for (index, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(var) = scope.lookup(*symbol) {
                 let res = LookupResult {
-                    is_global: index == 0,
+                    is_global: index == 0 && self.scopes.len() > 1,
                     is_upvalue: captured,
                     slot: var.slot,
                     type_id: var.type_id,
@@ -684,7 +714,7 @@ impl SemanticAnalyzer {
                     let arg = self.handle_expr(&expr.args[0]);
                     if let ir::ExprKind::Int(index) = arg.kind {
                         Ir {
-                            kind: ir::ExprKind::GetTupleElem {
+                            kind: ir::ExprKind::IndexTuple {
                                 tuple: callee_ar.into(),
                                 index: index as usize,
                             },
@@ -725,14 +755,14 @@ impl SemanticAnalyzer {
             self.predefined_types.t_any
         };
 
-        Ir {
-            kind: ir::ExprKind::Binary(ir::BinaryExpr {
-                lhs: lhs.into(),
-                op: expr.op,
-                rhs: rhs.into(),
-            }),
-            ty: type_id,
-        }
+        let kind = match expr.op {
+            BinaryOp::Add => ir::ExprKind::Add((lhs.into(), rhs.into())),
+            BinaryOp::Sub => ir::ExprKind::Sub((lhs.into(), rhs.into())),
+            BinaryOp::Mul => ir::ExprKind::Mul((lhs.into(), rhs.into())),
+            BinaryOp::Div => ir::ExprKind::Div((lhs.into(), rhs.into())),
+        };
+
+        Ir { kind, ty: type_id }
     }
 
     fn handle_unary_expr(&mut self, expr: &UnaryExpr) -> Ir {

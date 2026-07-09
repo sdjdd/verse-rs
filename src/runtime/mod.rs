@@ -39,6 +39,7 @@ pub enum Value {
     Char(u8),
     Char32(char),
     String(String),
+    False,
     Logic(bool),
     Option(Option<Box<Value>>),
     Tuple {
@@ -81,6 +82,17 @@ impl Value {
             Value::Integer(v) => *v == 0,
             Value::Float(v) => *v == 0.0,
             Value::Rational(v, ..) => *v == 0,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn to_string(self: Value) -> String {
+        match self {
+            Value::Integer(v) => format!("{}", v),
+            Value::Float(v) => format!("{}", v),
+            Value::Char(c) => format!("{}", c as char),
+            Value::Char32(c) => format!("{}", c),
+            Value::String(s) => s,
             _ => unimplemented!(),
         }
     }

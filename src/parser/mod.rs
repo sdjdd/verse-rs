@@ -320,7 +320,7 @@ impl<'src> Parser<'src> {
         let mut lhs = self.parse_multiplicative_expr()?;
         loop {
             let op = match self.peek() {
-                Token::Plus => BinaryOp::Plus,
+                Token::Plus => BinaryOp::Add,
                 Token::Minus => BinaryOp::Sub,
                 _ => break,
             };

@@ -143,7 +143,7 @@ impl CallExpr {
 
 #[derive(Debug, Clone, Copy)]
 pub enum BinaryOp {
-    Plus,
+    Add,
     Sub,
     Mul,
     Div,

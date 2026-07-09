@@ -31,6 +31,7 @@ impl SymbolRegistry {
 }
 
 #[allow(non_snake_case)]
+#[derive(Clone, Copy)]
 pub struct PredefinedSymbols {
     pub s_Length: Symbol,
     pub s_Print: Symbol,

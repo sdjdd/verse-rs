@@ -1,5 +1,5 @@
 use crate::{
-    ast::{BinaryOp, CompareOp},
+    ast::CompareOp,
     core::{ConstValue, PredefinedSymbols, types::PredefinedTypes},
     ir::{self, ExprKind, FunctionExpr, Ir, Slot, UpvalueDesc},
     runtime::{
@@ -123,7 +123,6 @@ impl Evaluator {
             ExprKind::StoreLocal { slot, value } => self.handle_store_local(*slot, value)?,
             ExprKind::LoadUpvalue { index } => self.handle_load_upvalue(*index)?,
             ExprKind::StoreUpvalue { index, value } => self.handle_store_upvalue(*index, value)?,
-            ExprKind::Binary(expr) => self.eval_binary(expr)?,
             ExprKind::Neg(expr) => -(self.eval(expr)?),
             ExprKind::Not(ir) => self.handle_not(ir)?,
             ExprKind::If(expr) => self.eval_if(expr)?,
@@ -136,7 +135,7 @@ impl Evaluator {
             ExprKind::Func(e) => self.eval_func_expr(e)?,
             ExprKind::Call(expr) => self.eval_call(expr)?,
             ExprKind::Cast { ty, value } => self.test_value_type(value, *ty)?,
-            ExprKind::GetTupleElem { tuple, index } => {
+            ExprKind::IndexTuple { tuple, index } => {
                 if let Value::Tuple { elements, .. } = self.eval(&tuple)? {
                     elements[*index].clone()
                 } else {
@@ -145,6 +144,7 @@ impl Evaluator {
             }
             ExprKind::GetLength(id) => self.eval_get_length(id)?,
             ExprKind::Option(id) => self.eval_option_value(id.as_deref())?,
+            _ => unimplemented!(),
         };
         Ok(self.deref_value(value))
     }
@@ -251,27 +251,6 @@ impl Evaluator {
             _ => false,
         };
         if ok { Ok(value) } else { Err(Failure()) }
-    }
-
-    fn eval_binary(&mut self, expr: &ir::BinaryExpr) -> Result<Value, Failure> {
-        let left = self.eval(&expr.lhs)?;
-        let right = self.eval(&expr.rhs)?;
-        match (left, right) {
-            (left, right) => {
-                let value = match expr.op {
-                    BinaryOp::Plus => left + right,
-                    BinaryOp::Sub => left - right,
-                    BinaryOp::Mul => left * right,
-                    BinaryOp::Div => {
-                        if right.is_zero() {
-                            return Err(Failure());
-                        }
-                        left / right
-                    }
-                };
-                Ok(value)
-            }
-        }
     }
 
     fn handle_not(&mut self, ir: &ir::Ir) -> Result<Value, Failure> {

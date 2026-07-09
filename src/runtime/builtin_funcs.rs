@@ -17,7 +17,8 @@ pub fn write_value(
             }
         }
         Value::Void => Ok(()),
-        Value::Logic(value) => write!(w, "{}", value),
+        Value::Logic(value) => write!(w, "logic{{{}}}", value),
+        Value::False => write!(w, "false"),
         Value::Integer(value) => write!(w, "{}", value),
         Value::Rational(num, den) => write!(w, "{}/{}", num, den),
         Value::Float(value) => write!(w, "{}", value),
@@ -36,7 +37,16 @@ pub fn write_value(
         Value::Function { .. } => write!(w, "[Function]"),
         Value::Type { .. } => write!(w, "[Type]"),
         Value::Option(_) => write!(w, "[Option]"),
-        Value::Ref(id) => write!(w, "[Ref({})]", id.0),
+        Value::Ref(id) => {
+            let value = loop {
+                let value = heap.fetch_obj(*id);
+                if matches!(value, Value::Ref(_)) {
+                    continue;
+                }
+                break value;
+            };
+            write_value(w, heap, value, quate_string)
+        }
     }
 }
 
