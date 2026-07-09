@@ -29,7 +29,7 @@ pub enum ParseError {
     LexerError { inner: LexerError, span: Span },
 }
 
-pub type ParseResult<T> = Result<T, ParseError>;
+pub type ParseResult<T = Expression> = Result<T, ParseError>;
 
 pub struct Parser<'src> {
     source: &'src str,
@@ -318,8 +318,8 @@ impl<'src> Parser<'src> {
         let mut lhs = self.parse_multiplicative_expr()?;
         loop {
             let op = match self.peek() {
-                Token::Plus => BinaryOperator::Plus,
-                Token::Minus => BinaryOperator::Sub,
+                Token::Plus => BinaryOp::Plus,
+                Token::Minus => BinaryOp::Sub,
                 _ => break,
             };
             self.next();
@@ -330,18 +330,42 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_multiplicative_expr(&mut self) -> ParseResult<Expression> {
-        let mut lhs = self.parse_call_expr()?;
+        let mut lhs = self.parse_unary_expr()?;
         loop {
             let op = match self.peek() {
-                Token::Star => BinaryOperator::Mul,
-                Token::Slash => BinaryOperator::Div,
+                Token::Star => BinaryOp::Mul,
+                Token::Slash => BinaryOp::Div,
                 _ => break,
             };
             self.next();
-            let rhs = self.parse_call_expr()?;
+            let rhs = self.parse_unary_expr()?;
             lhs = self.make_expr(lhs.span.start..rhs.span.end, BinaryExpr::new(lhs, op, rhs));
         }
         Ok(lhs)
+    }
+
+    fn parse_unary_expr(&mut self) -> ParseResult {
+        let op = match self.peek() {
+            Token::Plus => Some(UnaryOp::Plus),
+            Token::Minus => Some(UnaryOp::Minus),
+            Token::Not => Some(UnaryOp::Not),
+            _ => None,
+        };
+
+        if let Some(op) = op {
+            self.next();
+            let start = self.span().start;
+            let expr = self.parse_unary_expr()?;
+            Ok(Expression {
+                span: start..expr.span.end,
+                kind: ExprKind::Unary(UnaryExpr {
+                    op,
+                    expr: expr.into(),
+                }),
+            })
+        } else {
+            self.parse_call_expr()
+        }
     }
 
     fn parse_if_expr(&mut self) -> ParseResult<Expression> {

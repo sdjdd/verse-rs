@@ -7,8 +7,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Expression {
-    pub kind: ExprKind,
     pub span: Span,
+    pub kind: ExprKind,
 }
 
 #[derive(Debug, Clone, From)]
@@ -25,6 +25,7 @@ pub enum ExprKind {
     Logic(bool),
     Call(CallExpr),
     Binary(BinaryExpr),
+    Unary(UnaryExpr),
     If(IfExpr),
     Template(TemplateExpression),
     CompareChain(CompareChainExpr),
@@ -139,7 +140,7 @@ impl CallExpr {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum BinaryOperator {
+pub enum BinaryOp {
     Plus,
     Sub,
     Mul,
@@ -148,19 +149,32 @@ pub enum BinaryOperator {
 
 #[derive(Debug, Clone)]
 pub struct BinaryExpr {
-    pub op: BinaryOperator,
+    pub op: BinaryOp,
     pub lhs: Box<Expression>,
     pub rhs: Box<Expression>,
 }
 
 impl BinaryExpr {
-    pub fn new(lhs: Expression, op: BinaryOperator, rhs: Expression) -> Self {
+    pub fn new(lhs: Expression, op: BinaryOp, rhs: Expression) -> Self {
         Self {
             op,
             lhs: lhs.into(),
             rhs: rhs.into(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnaryOp {
+    Plus,
+    Minus,
+    Not,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnaryExpr {
+    pub op: UnaryOp,
+    pub expr: Box<Expression>,
 }
 
 #[derive(Debug, Clone)]

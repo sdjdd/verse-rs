@@ -46,6 +46,8 @@ pub fn print_semantic_error(
             found,
         } => (span, format!("expect {}, found {}", expected, found)),
         SemanticError::NotCallable { callee } => (&callee.span, format!("is not callable")),
+        // TODO: use this format: "cannot apply unary '-' to value of type 'string'"
+        SemanticError::TypeError { span, .. } => (span, format!("invalid unary operand")),
     };
 
     let start_pos = get_source_position(src, span.start).unwrap();

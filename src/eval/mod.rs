@@ -1,5 +1,5 @@
 use crate::{
-    ast::{BinaryOperator, CompareOp},
+    ast::{BinaryOp, CompareOp},
     core::{ConstValue, PredefinedSymbols, types::PredefinedTypes},
     ir::{self, ExprKind, FunctionExpr, Ir, Slot, UpvalueDesc},
     runtime::{
@@ -122,6 +122,8 @@ impl Evaluator {
             ExprKind::LoadUpvalue { index } => self.handle_load_upvalue(*index)?,
             ExprKind::StoreUpvalue { index, value } => self.handle_store_upvalue(*index, value)?,
             ExprKind::Binary(expr) => self.eval_binary(expr)?,
+            ExprKind::Neg(expr) => -(self.eval(expr)?),
+            ExprKind::Not(ir) => self.handle_not(ir)?,
             ExprKind::If(expr) => self.eval_if(expr)?,
             ExprKind::Template(expr) => self.eval_template(expr)?,
             ExprKind::CompareChain(expr) => self.eval_compare_chain(expr)?,
@@ -253,10 +255,10 @@ impl Evaluator {
         match (left, right) {
             (left, right) => {
                 let value = match expr.op {
-                    BinaryOperator::Plus => left + right,
-                    BinaryOperator::Sub => left - right,
-                    BinaryOperator::Mul => left * right,
-                    BinaryOperator::Div => {
+                    BinaryOp::Plus => left + right,
+                    BinaryOp::Sub => left - right,
+                    BinaryOp::Mul => left * right,
+                    BinaryOp::Div => {
                         if right.is_zero() {
                             return Err(Failure());
                         }
@@ -265,6 +267,14 @@ impl Evaluator {
                 };
                 Ok(value)
             }
+        }
+    }
+
+    fn handle_not(&mut self, ir: &ir::Ir) -> Result<Value, Failure> {
+        let value = self.eval(ir);
+        match value {
+            Ok(Value::Logic(v)) => Ok(Value::Logic(!v)),
+            _ => Ok(Value::Logic(!value.is_ok())),
         }
     }
 

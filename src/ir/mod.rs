@@ -1,5 +1,5 @@
 use crate::{
-    ast::{BinaryOperator, CompareOp},
+    ast::{BinaryOp, CompareOp},
     core::ConstId,
     runtime::TypeId,
 };
@@ -32,6 +32,8 @@ pub enum ExprKind {
     Call(CallExpr),
     GetTupleElem { tuple: Box<Ir>, index: usize },
     Binary(BinaryExpr),
+    Neg(Box<Ir>),
+    Not(Box<Ir>),
     If(IfExpr),
     Template(Vec<TemplateElement>),
     CompareChain(CompareChainExpr),
@@ -59,7 +61,7 @@ pub struct CallExpr {
 #[derive(Debug, Clone)]
 pub struct BinaryExpr {
     pub lhs: Box<Ir>,
-    pub op: BinaryOperator,
+    pub op: BinaryOp,
     pub rhs: Box<Ir>,
 }
 

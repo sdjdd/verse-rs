@@ -163,6 +163,30 @@ impl std::ops::Div for Value {
     }
 }
 
+impl std::ops::Neg for Value {
+    type Output = Value;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            Value::Integer(v) => Value::Integer(-v),
+            Value::Float(v) => Value::Float(-v),
+            Value::Rational(n, d) => Value::Rational(-n, d),
+            _ => panic!("invalid Neg operand"),
+        }
+    }
+}
+
+impl std::ops::Not for Value {
+    type Output = Value;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Value::Logic(v) => Value::Logic(!v),
+            _ => panic!("invalid Not operand"),
+        }
+    }
+}
+
 fn gcd(mut a: u64, mut b: u64) -> u64 {
     while b != 0 {
         let t = b;

@@ -233,6 +233,7 @@ impl SemanticAnalyzer {
             ExprKind::Func(e) => self.handle_func_expr(e),
             ExprKind::Call(e) => self.handle_call_expr(expr.span.clone(), e),
             ExprKind::Binary(e) => self.handle_binary_expr(expr.span.clone(), e),
+            ExprKind::Unary(e) => self.handle_unary_expr(e),
             ExprKind::Type(e) => {
                 let type_id = self.handle_type_expr(e);
                 Ir {
@@ -693,6 +694,40 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn handle_unary_expr(&mut self, expr: &UnaryExpr) -> Ir {
+        let ir = self.handle_expr(&expr.expr);
+        match expr.op {
+            UnaryOp::Plus => ir,
+            UnaryOp::Minus => {
+                let expected_types = vec![
+                    self.predefined_types.t_int,
+                    self.predefined_types.t_float,
+                    self.predefined_types.t_rational,
+                ];
+                if expected_types.contains(&ir.ty) {
+                    Ir {
+                        ty: ir.ty,
+                        kind: ir::ExprKind::Neg(ir.into()),
+                    }
+                } else {
+                    self.errors.push(SemanticError::TypeError {
+                        span: expr.expr.span.clone(),
+                        kind: TypeError::InvalidUnaryOperand {
+                            op: expr.op,
+                            operand: ir.ty,
+                            expected: expected_types,
+                        },
+                    });
+                    self.placeholder_ir()
+                }
+            }
+            UnaryOp::Not => Ir {
+                ty: self.predefined_types.t_logic,
+                kind: ir::ExprKind::Not(ir.into()),
+            },
+        }
+    }
+
     fn handle_type_expr(&mut self, expr: &TypeExpr) -> TypeId {
         let type_id = match &expr.kind {
             TypeExprKind::Named(symbol) => (|| -> TypeId {
@@ -787,6 +822,15 @@ impl SemanticAnalyzer {
     }
 }
 
+#[derive(Debug)]
+pub enum TypeError {
+    InvalidUnaryOperand {
+        op: UnaryOp,
+        operand: TypeId,
+        expected: Vec<TypeId>,
+    },
+}
+
 #[derive(Error, Debug)]
 pub enum SemanticError {
     #[error("{span:?}: cannot mutate immutable {symbol:?}")]
@@ -817,4 +861,7 @@ pub enum SemanticError {
 
     #[error("is not callable")]
     NotCallable { callee: Expression },
+
+    #[error("type error")]
+    TypeError { span: Span, kind: TypeError },
 }

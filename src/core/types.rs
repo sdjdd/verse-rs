@@ -8,6 +8,7 @@ pub enum TypeInfo {
     Any,
     Int,
     Float,
+    Rational,
     False,
     Logic,
     Char,
@@ -56,6 +57,7 @@ pub struct PredefinedTypes {
     pub t_float: TypeId,
     pub t_int: TypeId,
     pub t_logic: TypeId,
+    pub t_rational: TypeId,
     pub t_string: TypeId,
     pub t_void: TypeId,
 }
@@ -70,6 +72,7 @@ impl PredefinedTypes {
             t_float: reg.intern(TypeInfo::Float),
             t_int: reg.intern(TypeInfo::Int),
             t_logic: reg.intern(TypeInfo::Logic),
+            t_rational: reg.intern(TypeInfo::Rational),
             t_string: reg.intern(TypeInfo::String),
             t_void: reg.intern(TypeInfo::Void),
         }

@@ -121,6 +121,9 @@ pub enum Token {
     #[token("false")]
     False,
 
+    #[token("not")]
+    Not,
+
     #[token("if")]
     If,
 
