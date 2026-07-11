@@ -2,8 +2,8 @@ use derive_more::Constructor;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::{
+    compiler::ir::UpvalueDesc,
     core::{ConstValue, types::PredefinedTypes},
-    ir::UpvalueDesc,
     runtime::{
         CallContext, FnKind, FunctionId, TypeId, Value,
         heap::{Heap, ObjectId, SimpleHeap},

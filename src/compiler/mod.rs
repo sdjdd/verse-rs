@@ -1,10 +1,17 @@
 use crate::{
-    ast::CompareOp,
     core::ConstId,
-    ir::{ExprKind, FunctionExpr, IfExpr, Ir, Slot, TemplateElement},
     runtime::TypeId,
     vm::{FailureHandler, Function, Opcode},
 };
+
+pub mod ast;
+pub mod ir;
+pub mod lexer;
+pub mod parser;
+pub mod semantic;
+
+use ast::CompareOp;
+use ir::{ExprKind, FunctionExpr, IfExpr, Ir, Slot, TemplateElement};
 
 #[derive(Default)]
 struct LoopContext {

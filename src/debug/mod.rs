@@ -1,8 +1,6 @@
 use crate::{
+    compiler::{lexer::LexerError, parser::ParseError, semantic::SemanticError},
     core::{SymbolRegistry, types::TypeRegistry},
-    lexer::LexerError,
-    parser::ParseError,
-    semantic::SemanticError,
 };
 
 pub fn print_semantic_error(

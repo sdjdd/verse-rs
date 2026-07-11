@@ -2,14 +2,14 @@ use ordermap::OrderSet;
 use std::collections::HashMap;
 use thiserror::Error;
 
+use super::ast::*;
+use super::ir::{self, Ir, Slot, UpvalueDesc};
+use super::lexer::Span;
 use crate::{
-    ast::*,
     core::{
         PredefinedSymbols, Symbol, SymbolRegistry,
         types::{PredefinedTypes, TypeInfo, TypeRegistry},
     },
-    ir::{self, Ir, Slot, UpvalueDesc},
-    lexer::Span,
     runtime::{FnKind, TypeId, Value, builtin_funcs},
 };
 

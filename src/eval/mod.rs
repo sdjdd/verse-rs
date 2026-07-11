@@ -1,13 +1,13 @@
 use crate::{
-    ast::CompareOp,
+    compiler::ast::CompareOp,
+    compiler::ir::{self, ExprKind, FunctionExpr, Ir, Slot, UpvalueDesc},
+    compiler::semantic::Scope,
     core::{ConstValue, PredefinedSymbols, types::PredefinedTypes},
-    ir::{self, ExprKind, FunctionExpr, Ir, Slot, UpvalueDesc},
     runtime::{
         CallContext, Failure, FnKind, FunctionId, TypeId, Value,
         builtin_funcs::{self, write_value},
         heap::{Heap, ObjectId, SimpleHeap},
     },
-    semantic::Scope,
 };
 
 #[derive(Default)]

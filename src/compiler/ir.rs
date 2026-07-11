@@ -1,8 +1,5 @@
-use crate::{
-    ast::{BinaryOp, CompareOp},
-    core::ConstId,
-    runtime::TypeId,
-};
+use crate::compiler::ast::{BinaryOp, CompareOp};
+use crate::{core::ConstId, runtime::TypeId};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Slot(pub usize);

@@ -1,10 +1,10 @@
 use thiserror::Error;
 
+use super::ast::*;
+use super::lexer::{LexerError, Span, Token};
 use crate::{
-    ast::*,
+    compiler::parser::const_pool::ConstPool,
     core::{ConstId, ConstValue, PredefinedSymbols, SymbolRegistry},
-    lexer::{LexerError, Span, Token},
-    parser::const_pool::ConstPool,
 };
 
 mod const_pool;
@@ -814,8 +814,8 @@ fn escape_char(ch: char) -> char {
 
 #[cfg(test)]
 mod tests {
+    use super::super::lexer::tokenize;
     use super::*;
-    use crate::lexer::tokenize;
 
     fn parse_program(src: &str) -> (Program, usize) {
         let tokens = tokenize(src).unwrap();

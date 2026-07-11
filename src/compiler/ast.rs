@@ -1,9 +1,7 @@
 use derive_more::{Constructor, From};
 
-use crate::{
-    core::{ConstId, Symbol},
-    lexer::Span,
-};
+use super::lexer::Span;
+use crate::core::{ConstId, Symbol};
 
 #[derive(Debug, Clone)]
 pub struct Expression {

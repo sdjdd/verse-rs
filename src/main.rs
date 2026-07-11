@@ -2,11 +2,8 @@ use std::env;
 use std::fs;
 use std::io::{self, Read};
 
-use verse::compiler::Compiler;
+use verse::compiler::{Compiler, lexer::tokenize, parser::Parser, semantic::SemanticAnalyzer};
 use verse::debug::{print_parser_error, print_semantic_error};
-use verse::lexer::tokenize;
-use verse::parser::Parser;
-use verse::semantic::SemanticAnalyzer;
 use verse::vm::Vm;
 
 fn main() {
