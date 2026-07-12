@@ -46,6 +46,7 @@ pub enum ExprKind {
 
     Cast { ty: TypeId, value: Box<Ir> },
     GetLength(Box<Ir>),
+    Concat(Vec<Ir>),
 }
 
 #[derive(Debug, Clone)]

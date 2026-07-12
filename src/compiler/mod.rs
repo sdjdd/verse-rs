@@ -77,6 +77,7 @@ impl Compiler {
             ExprKind::Type(type_id) => self.compile_type_literal(type_id),
             ExprKind::Cast { ty, value } => self.compile_cast(ty, *value),
             ExprKind::GetLength(ir) => self.compile_get_len(*ir),
+            ExprKind::Concat(irs) => self.compile_concat(irs),
         }
     }
 
@@ -337,6 +338,16 @@ impl Compiler {
         self.append_u32(argc);
     }
 
+    fn compile_concat(&mut self, irs: Vec<Ir>) {
+        let count = irs.len();
+        for ir in irs {
+            self.compile_ir(ir);
+        }
+        self.append_op(Opcode::Concat);
+        self.append_u32(count as u32);
+        self.op_stack_size -= (count as u16) - 1;
+    }
+
     fn compile_template(&mut self, elements: Vec<TemplateElement>) {
         let count = elements.len();
         for elem in elements {
@@ -351,7 +362,7 @@ impl Compiler {
                 }
             }
         }
-        self.append_op(Opcode::ConcatStr);
+        self.append_op(Opcode::Concat);
         self.append_u32(count as u32);
         self.op_stack_size -= (count as u16) - 1;
     }

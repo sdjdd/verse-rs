@@ -325,8 +325,17 @@ impl<'src> Parser<'src> {
                 _ => break,
             };
             self.next();
+            let op_span = self.span();
             let rhs = self.parse_multiplicative_expr()?;
-            lhs = self.make_expr(lhs.span.start..rhs.span.end, BinaryExpr::new(lhs, op, rhs));
+            lhs = Expression {
+                span: lhs.span.start..rhs.span.end,
+                kind: ExprKind::Binary(BinaryExpr {
+                    op,
+                    op_span,
+                    lhs: lhs.into(),
+                    rhs: rhs.into(),
+                }),
+            }
         }
         Ok(lhs)
     }
@@ -340,8 +349,17 @@ impl<'src> Parser<'src> {
                 _ => break,
             };
             self.next();
+            let op_span = self.span();
             let rhs = self.parse_unary_expr()?;
-            lhs = self.make_expr(lhs.span.start..rhs.span.end, BinaryExpr::new(lhs, op, rhs));
+            lhs = Expression {
+                span: lhs.span.start..rhs.span.end,
+                kind: ExprKind::Binary(BinaryExpr {
+                    op,
+                    op_span,
+                    lhs: lhs.into(),
+                    rhs: rhs.into(),
+                }),
+            }
         }
         Ok(lhs)
     }

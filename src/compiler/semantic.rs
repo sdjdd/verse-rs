@@ -748,6 +748,33 @@ impl SemanticAnalyzer {
         let lhs = self.handle_expr(&expr.lhs);
         let rhs = self.handle_expr(&expr.rhs);
 
+        if lhs.ty == self.predefined_types.t_string {
+            if expr.op == BinaryOp::Add {
+                if rhs.ty == lhs.ty {
+                    let mut irs = vec![];
+                    flatten_add_ir(lhs, &mut irs);
+                    flatten_add_ir(rhs, &mut irs);
+                    return Ir {
+                        ty: self.predefined_types.t_string,
+                        kind: ir::ExprKind::Concat(irs),
+                    };
+                } else {
+                    self.errors.push(SemanticError::TypeMismatch {
+                        span,
+                        expect: lhs.ty,
+                        found: rhs.ty,
+                    });
+                    return self.placeholder_ir();
+                }
+            } else {
+                self.errors.push(SemanticError::InvalidBinaryOp {
+                    span: expr.op_span.clone(),
+                    op: expr.op,
+                });
+                return self.placeholder_ir();
+            }
+        }
+
         let type_id = if lhs.ty == rhs.ty {
             lhs.ty
         } else {
@@ -893,6 +920,15 @@ impl SemanticAnalyzer {
     }
 }
 
+fn flatten_add_ir(ir: Ir, out: &mut Vec<Ir>) {
+    if let ir::ExprKind::Add((lhs, rhs)) = ir.kind {
+        flatten_add_ir(*lhs, out);
+        flatten_add_ir(*rhs, out);
+    } else {
+        out.push(ir);
+    }
+}
+
 #[derive(Debug)]
 pub enum TypeError {
     InvalidUnaryOperand {
@@ -938,4 +974,7 @@ pub enum SemanticError {
 
     #[error("'break' is not allowed outside of a loop")]
     BreakOutsideLoop { span: Span },
+
+    #[error("cannot apply {:?}", op)]
+    InvalidBinaryOp { span: Span, op: BinaryOp },
 }

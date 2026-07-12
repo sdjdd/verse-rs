@@ -139,7 +139,7 @@ impl CallExpr {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -150,18 +150,9 @@ pub enum BinaryOp {
 #[derive(Debug, Clone)]
 pub struct BinaryExpr {
     pub op: BinaryOp,
+    pub op_span: Span,
     pub lhs: Box<Expression>,
     pub rhs: Box<Expression>,
-}
-
-impl BinaryExpr {
-    pub fn new(lhs: Expression, op: BinaryOp, rhs: Expression) -> Self {
-        Self {
-            op,
-            lhs: lhs.into(),
-            rhs: rhs.into(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

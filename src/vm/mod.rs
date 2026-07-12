@@ -56,7 +56,7 @@ pub enum Opcode {
     IndexTuple,
 
     ToString,
-    ConcatStr,
+    Concat,
 
     Call,
     Cast,
@@ -182,7 +182,10 @@ impl Vm {
                 }
             }
         }
-        self.op_stack.pop().unwrap_or(Value::Void)
+        self.op_stack
+            .pop()
+            .map(|v| self.deref(&v).clone())
+            .unwrap_or(Value::Void)
     }
 
     fn get_stack_index(&self, offset: usize) -> usize {
@@ -269,7 +272,7 @@ impl Vm {
             Opcode::Jmp => self.exec_jmp(),
             Opcode::Call => self.exec_call(),
             Opcode::ToString => self.exec_to_string(),
-            Opcode::ConcatStr => self.exec_concat_str(),
+            Opcode::Concat => self.exec_concat_str(),
             Opcode::Cast => self.exec_cast(),
             Opcode::Len => self.exec_len(),
         }
@@ -294,6 +297,13 @@ impl Vm {
         let obj_id = self.heap.alloc_obj(value);
         self.stack[index] = Value::Ref(obj_id);
         obj_id
+    }
+
+    fn deref<'a>(&'a self, mut value: &'a Value) -> &'a Value {
+        while let Value::Ref(id) = value {
+            value = self.heap.fetch_obj(*id);
+        }
+        value
     }
 
     fn exec_push_int(&mut self) {
@@ -322,9 +332,8 @@ impl Vm {
             ConstValue::String(s) => s.to_owned(),
         };
         let val = Value::String(str);
-        // let obj_id = self.heap.alloc_obj(val);
-        // self.op_stack.push(Value::Ref(obj_id));
-        self.op_stack.push(val);
+        let obj_id = self.heap.alloc_obj(val);
+        self.op_stack.push(Value::Ref(obj_id));
     }
 
     fn exec_push_logic(&mut self, value: bool) {
@@ -588,22 +597,26 @@ impl Vm {
 
     fn exec_to_string(&mut self) {
         let value = self.op_stack.pop().unwrap();
-        let value = Value::String(value.to_string());
+        let value = match value {
+            Value::String(_) | Value::Ref(_) => value,
+            _ => Value::String(value.to_string()),
+        };
         self.op_stack.push(value);
     }
 
     fn exec_concat_str(&mut self) {
         let count = self.read_u32() as usize;
         let values = self.op_stack.split_off(self.op_stack.len() - count);
-        let strings: Vec<_> = values
-            .into_iter()
-            .map(|v| match v {
-                Value::String(s) => s,
-                _ => panic!("not string， ：{:?}", v),
-            })
-            .collect();
-        let value = Value::String(strings.concat());
-        self.op_stack.push(value);
+        let mut buf = String::new();
+        for value in values {
+            let value = self.deref(&value);
+            match value {
+                Value::String(s) => buf.push_str(s),
+                _ => panic!("not string"),
+            }
+        }
+        let obj_id = self.heap.alloc_obj(Value::String(buf));
+        self.op_stack.push(Value::Ref(obj_id));
     }
 
     fn exec_cast(&mut self) {
@@ -622,6 +635,7 @@ impl Vm {
 
     fn exec_len(&mut self) {
         let value = self.op_stack.pop().unwrap();
+        let value = self.deref(&value);
         let len = match value {
             Value::String(s) => s.len(),
             _ => unimplemented!(),

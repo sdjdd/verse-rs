@@ -47,6 +47,7 @@ pub fn print_semantic_error(
         // TODO: use this format: "cannot apply unary '-' to value of type 'string'"
         SemanticError::TypeError { span, .. } => (span, format!("invalid unary operand")),
         SemanticError::BreakOutsideLoop { span } => (span, err.to_string()),
+        SemanticError::InvalidBinaryOp { span, op } => (span, format!("cannot apply {:?}", op)),
     };
 
     let start_pos = get_source_position(src, span.start).unwrap();
