@@ -861,6 +861,10 @@ impl SemanticAnalyzer {
                 }
                 self.types.intern(TypeInfo::Tuple(arg_ids))
             }
+            TypeExprKind::Array(elem_type) => {
+                let elem_type_id = self.handle_type_expr(elem_type);
+                self.types.intern(TypeInfo::Array(elem_type_id))
+            }
             TypeExprKind::Function { params, ret } => {
                 let param_types: Vec<_> = params.iter().map(|p| self.handle_type_expr(p)).collect();
                 let ret_ty = self.handle_type_expr(ret);
@@ -901,6 +905,9 @@ impl SemanticAnalyzer {
             if id_expr.symbol == self.builtin_symbols.s_option {
                 return self.handle_construct_option(cons_expr);
             }
+            if id_expr.symbol == self.builtin_symbols.s_array {
+                return self.handle_construct_array(cons_expr);
+            }
         }
 
         todo!()
@@ -916,6 +923,34 @@ impl SemanticAnalyzer {
             }
         } else {
             self.placeholder_ir()
+        }
+    }
+
+    fn handle_construct_array(&mut self, cons_expr: &ConstructExpr) -> Ir {
+        if cons_expr.args.is_empty() {
+            todo!();
+        }
+
+        let mut irs: Vec<Ir> = vec![];
+        for (i, arg) in cons_expr.args.iter().enumerate() {
+            let ir = self.handle_expr(arg);
+            if i > 0 {
+                let prev = irs.last().unwrap();
+                if ir.ty != prev.ty {
+                    self.errors.push(SemanticError::TypeMismatch {
+                        span: arg.span.clone(),
+                        expect: prev.ty,
+                        found: ir.ty,
+                    });
+                    return self.placeholder_ir();
+                }
+            }
+            irs.push(ir);
+        }
+
+        Ir {
+            ty: self.types.intern(TypeInfo::Array(irs.first().unwrap().ty)),
+            kind: ir::ExprKind::Array(irs),
         }
     }
 }

@@ -18,6 +18,7 @@ pub enum TypeInfo {
 
     Option(TypeId),
     Tuple(Vec<TypeId>),
+    Array(TypeId),
     Function { params: Vec<TypeId>, ret: TypeId },
 
     Type(TypeId),

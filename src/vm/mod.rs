@@ -52,6 +52,7 @@ pub enum Opcode {
     MakeOption,
     MakeTuple,
     MakeClosure,
+    MakeArray,
 
     IndexTuple,
 
@@ -253,6 +254,7 @@ impl Vm {
             Opcode::LoadUpvalue => self.exec_load_upvalue(),
             Opcode::MakeOption => self.exec_make_option(),
             Opcode::MakeTuple => self.exec_make_tuple(),
+            Opcode::MakeArray => self.exec_make_array(),
             Opcode::MakeClosure => self.exec_make_closure(),
             Opcode::IndexTuple => self.exec_index_tuple(),
             Opcode::Add => self.exec_add(),
@@ -403,6 +405,18 @@ impl Vm {
         let elements = self.op_stack.split_off(start);
         let value = Value::Tuple {
             ty: TypeId(type_id as usize),
+            elements,
+        };
+        self.op_stack.push(value);
+    }
+
+    fn exec_make_array(&mut self) {
+        let type_id = self.read_u32();
+        let elem_cnt = self.read_u32();
+        let start = self.op_stack.len() - elem_cnt as usize;
+        let elements = self.op_stack.split_off(start);
+        let value = Value::Array {
+            type_id: TypeId(type_id as usize),
             elements,
         };
         self.op_stack.push(value);

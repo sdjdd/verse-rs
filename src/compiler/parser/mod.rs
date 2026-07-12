@@ -183,11 +183,21 @@ impl<'src> Parser<'src> {
 
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
         if self.consume_if(Token::Question) {
-            let start = self.span();
+            let start = self.span().start;
             let type_expr = self.parse_type_expr()?;
             return Ok(TypeExpr {
-                span: start.start..type_expr.span.end,
+                span: start..type_expr.span.end,
                 kind: TypeExprKind::Option(Box::new(type_expr)),
+            });
+        }
+
+        if self.consume_if(Token::LBracket) {
+            let start = self.span().start;
+            self.expect(Token::RBracket)?;
+            let elem_type = self.parse_type_expr()?;
+            return Ok(TypeExpr {
+                span: start..elem_type.span.end,
+                kind: TypeExprKind::Array(elem_type.into()),
             });
         }
 

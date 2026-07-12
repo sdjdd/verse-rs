@@ -42,6 +42,7 @@ pub enum TypeExprKind {
     Named(Symbol),
     Option(Box<TypeExpr>),
     Tuple(Vec<TypeExpr>),
+    Array(Box<TypeExpr>),
     Function {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,

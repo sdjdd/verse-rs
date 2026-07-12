@@ -58,7 +58,8 @@ impl Compiler {
             ExprKind::LoadGlobal { slot } => self.compile_load_global(slot),
             ExprKind::StoreUpvalue { index, value } => self.compile_store_upvalue(index, *value),
             ExprKind::LoadUpvalue { index } => self.compile_load_upvalue(index),
-            ExprKind::Tuple(elems) => self.compile_tuple(ir.ty, elems),
+            ExprKind::Tuple(elems) => self.compile_make(Opcode::MakeTuple, ir.ty, elems),
+            ExprKind::Array(elems) => self.compile_make(Opcode::MakeArray, ir.ty, elems),
             ExprKind::IndexTuple { tuple, index } => self.compile_index_tuple(*tuple, index),
             ExprKind::Add((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Add),
             ExprKind::Sub((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Sub),
@@ -202,16 +203,16 @@ impl Compiler {
         self.op_stack_size += 1;
     }
 
-    fn compile_tuple(&mut self, type_id: TypeId, irs: Vec<Ir>) {
-        let cnt = irs.len();
-        assert!(cnt < u16::MAX as usize);
+    fn compile_make(&mut self, op: Opcode, type_id: TypeId, irs: Vec<Ir>) {
+        let count = irs.len();
+        assert!(count < u16::MAX as usize);
         for ir in irs {
             self.compile_ir(ir);
         }
-        self.append_op(Opcode::MakeTuple);
+        self.append_op(op);
         self.append_u32(type_id.0 as u32);
-        self.append_u32(cnt as u32);
-        self.op_stack_size -= (cnt as u16) - 1;
+        self.append_u32(count as u32);
+        self.op_stack_size -= (count as u16) - 1;
     }
 
     fn compile_index_tuple(&mut self, value: Ir, index: usize) {

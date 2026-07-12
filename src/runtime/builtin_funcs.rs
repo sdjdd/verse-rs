@@ -34,6 +34,16 @@ pub fn write_value(
             }
             write!(w, ")")
         }
+        Value::Array { elements, .. } => {
+            write!(w, "[")?;
+            for (i, v) in elements.iter().enumerate() {
+                if i > 0 {
+                    write!(w, ", ")?;
+                }
+                write_value(w, heap, v, true)?;
+            }
+            write!(w, "]")
+        }
         Value::Function { .. } => write!(w, "[Function]"),
         Value::Type { .. } => write!(w, "[Type]"),
         Value::Option(_) => write!(w, "[Option]"),
