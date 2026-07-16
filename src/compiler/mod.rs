@@ -47,7 +47,6 @@ impl Compiler {
 
     pub fn compile_ir(&mut self, ir: Ir) {
         match ir.kind {
-            ExprKind::Nop => {}
             ExprKind::Int(v) => self.compile_int(v),
             ExprKind::Float(v) => self.compile_float(v),
             ExprKind::Char(v) => self.compile_char(v),

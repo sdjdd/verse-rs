@@ -13,7 +13,6 @@ pub struct Ir {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    Nop,
     LoadGlobal { slot: Slot },
     StoreGlobal { slot: Slot, value: Box<Ir> },
     LoadLocal { slot: Slot },
