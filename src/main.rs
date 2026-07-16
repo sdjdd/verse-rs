@@ -2,7 +2,9 @@ use std::env;
 use std::fs;
 use std::io::{self, Read};
 
-use verse::compiler::{Compiler, lexer::tokenize, parser::Parser, semantic::SemanticAnalyzer};
+use verse::compiler::{
+    compiler::Compiler, lexer::tokenize, parser::Parser, semantic::SemanticAnalyzer,
+};
 use verse::debug::{print_parser_error, print_semantic_error};
 use verse::vm::Vm;
 use verse::vm::global_vars;

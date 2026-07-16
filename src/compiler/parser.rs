@@ -1,13 +1,10 @@
 use thiserror::Error;
 
-use super::ast::*;
-use super::lexer::{LexerError, Span, Token};
-use crate::{
-    compiler::parser::const_pool::ConstPool,
-    core::{ConstId, ConstValue, SymbolRegistry},
-};
+use crate::core::{ConstId, ConstValue, SymbolRegistry};
 
-mod const_pool;
+use super::ast::*;
+use super::const_pool::ConstPool;
+use super::lexer::{LexerError, Span, Token};
 
 #[derive(Debug)]
 pub struct Program {
