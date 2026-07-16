@@ -286,11 +286,10 @@ impl SemanticAnalyzer {
         mutable: bool,
     ) -> Ir {
         let value_ir = self.handle_expr(value);
-
         let slot = self.declare(name, ty.clone(), mutable);
 
         if value_ir.ty == TypeInfo::False {
-            Ir {
+            return Ir {
                 kind: ir::ExprKind::StoreLocal {
                     slot,
                     value: Box::new(Ir {
@@ -299,22 +298,23 @@ impl SemanticAnalyzer {
                     }),
                 },
                 ty,
-            }
-        } else if self.is_assignable_to(&value_ir.ty, &ty) {
-            Ir {
-                kind: ir::ExprKind::StoreLocal {
-                    slot,
-                    value: Box::new(value_ir),
-                },
-                ty,
-            }
-        } else {
+            };
+        }
+
+        if !self.is_assignable_to(&value_ir.ty, &ty) {
             self.errors.push(SemanticError::TypeMismatch {
                 span: value.span.clone(),
-                expect: ty,
-                found: value_ir.ty,
+                expect: ty.clone(),
+                found: value_ir.ty.clone(),
             });
-            self.placeholder_ir()
+        }
+
+        Ir {
+            kind: ir::ExprKind::StoreLocal {
+                slot,
+                value: Box::new(value_ir),
+            },
+            ty,
         }
     }
 
@@ -365,47 +365,50 @@ impl SemanticAnalyzer {
 
         match &expr.target.kind {
             LValueKind::Id(id_expr) => {
-                if let Some(var) = self.lookup(&id_expr.symbol) {
-                    if var.type_info != value_type {
-                        self.errors.push(SemanticError::TypeMismatch {
-                            span: expr.expr.span.clone(),
-                            expect: var.type_info.clone(),
-                            found: value_type,
-                        })
+                let var = match self.lookup(&id_expr.symbol) {
+                    Some(var) => var,
+                    None => {
+                        return self.placeholder_ir();
                     }
-                    if !var.mutable {
-                        self.errors.push(SemanticError::Mutability {
-                            span: expr.target.span.clone(),
-                            symbol: id_expr.symbol,
-                        })
+                };
+
+                if var.type_info != value_type {
+                    self.errors.push(SemanticError::TypeMismatch {
+                        span: expr.expr.span.clone(),
+                        expect: var.type_info.clone(),
+                        found: value_type,
+                    })
+                }
+                if !var.mutable {
+                    self.errors.push(SemanticError::Mutability {
+                        span: expr.target.span.clone(),
+                        symbol: id_expr.symbol,
+                    })
+                }
+                if var.is_global {
+                    Ir {
+                        kind: ir::ExprKind::StoreGlobal {
+                            slot: var.slot,
+                            value: value_ir.into(),
+                        },
+                        ty: var.type_info,
                     }
-                    if var.is_global {
-                        Ir {
-                            kind: ir::ExprKind::StoreGlobal {
-                                slot: var.slot,
-                                value: value_ir.into(),
-                            },
-                            ty: var.type_info,
-                        }
-                    } else if var.is_upvalue {
-                        Ir {
-                            kind: ir::ExprKind::StoreUpvalue {
-                                index: self.capture(var.scope_index, var.slot),
-                                value: value_ir.into(),
-                            },
-                            ty: var.type_info,
-                        }
-                    } else {
-                        Ir {
-                            kind: ir::ExprKind::StoreLocal {
-                                slot: var.slot,
-                                value: value_ir.into(),
-                            },
-                            ty: var.type_info,
-                        }
+                } else if var.is_upvalue {
+                    Ir {
+                        kind: ir::ExprKind::StoreUpvalue {
+                            index: self.capture(var.scope_index, var.slot),
+                            value: value_ir.into(),
+                        },
+                        ty: var.type_info,
                     }
                 } else {
-                    self.placeholder_ir()
+                    Ir {
+                        kind: ir::ExprKind::StoreLocal {
+                            slot: var.slot,
+                            value: value_ir.into(),
+                        },
+                        ty: var.type_info,
+                    }
                 }
             }
         }
@@ -912,14 +915,13 @@ impl SemanticAnalyzer {
         for (i, arg) in cons_expr.args.iter().enumerate() {
             let ir = self.handle_expr(arg);
             if i > 0 {
-                let prev = irs.last().unwrap();
-                if ir.ty != prev.ty {
+                let head = &irs[0];
+                if self.is_assignable_to(&ir.ty, &head.ty) {
                     self.errors.push(SemanticError::TypeMismatch {
                         span: arg.span.clone(),
-                        expect: prev.ty.clone(),
+                        expect: head.ty.clone(),
                         found: ir.ty.clone(),
                     });
-                    return self.placeholder_ir();
                 }
             }
             irs.push(ir);
