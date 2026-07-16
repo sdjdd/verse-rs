@@ -379,6 +379,7 @@ impl Compiler {
                 TemplateElement::String(id) => {
                     self.append_op(Opcode::PushString);
                     self.append_u32(id.0 as u32);
+                    self.op_stack_size += 1;
                 }
             }
         }

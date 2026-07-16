@@ -183,7 +183,7 @@ impl<'src> Parser<'src> {
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
         if self.consume_if(Token::Type) {
             if self.consume_if(Token::LBrace) {
-                let expr = self.parse_type_expr()?;
+                let expr = self.parse_advance_type_expr()?;
                 self.expect(Token::RBrace)?;
                 return Ok(expr);
             }
@@ -226,6 +226,15 @@ impl<'src> Parser<'src> {
             });
         }
 
+        self.expect(Token::Id)?;
+        let symbol = self.symbol_reg.intern(self.slice());
+        Ok(TypeExpr {
+            kind: TypeExprKind::Named(symbol),
+            span: self.span(),
+        })
+    }
+
+    fn parse_advance_type_expr(&mut self) -> ParseResult<TypeExpr> {
         if self.consume_if(Token::Underscore) {
             let start = self.span().start;
             self.expect(Token::LParen)?;
@@ -250,12 +259,7 @@ impl<'src> Parser<'src> {
             });
         }
 
-        self.expect(Token::Id)?;
-        let symbol = self.symbol_reg.intern(self.slice());
-        Ok(TypeExpr {
-            kind: TypeExprKind::Named(symbol),
-            span: self.span(),
-        })
+        self.parse_type_expr()
     }
 
     fn parse_decl_expr(&mut self) -> ParseResult<Expression> {

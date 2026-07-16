@@ -1,5 +1,6 @@
-mod symbol;
 pub mod types;
+
+mod symbol;
 
 pub use symbol::{PredefinedSymbols, Symbol, SymbolRegistry};
 
