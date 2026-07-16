@@ -27,7 +27,7 @@ pub enum FnKind {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct TypeId(pub usize);
+pub struct TypeId(pub u32);
 
 #[derive(Debug, Clone, Default)]
 pub enum Value {

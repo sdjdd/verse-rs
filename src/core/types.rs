@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use ordermap::OrderSet;
 
 use crate::runtime::TypeId;
 
@@ -31,8 +31,7 @@ pub enum TypeInfo {
 
 #[derive(Default)]
 pub struct TypeRegistry {
-    map: HashMap<TypeInfo, TypeId>,
-    vec: Vec<TypeInfo>,
+    set: OrderSet<TypeInfo>,
 }
 
 impl TypeRegistry {
@@ -41,18 +40,12 @@ impl TypeRegistry {
     }
 
     pub fn intern(&mut self, key: TypeInfo) -> TypeId {
-        if let Some(&id) = self.map.get(&key) {
-            return id;
-        }
-
-        let id = TypeId(self.vec.len());
-        self.vec.push(key.clone());
-        self.map.insert(key, id);
-        id
+        let index = self.set.insert_full(key).0;
+        TypeId(index as u32)
     }
 
     pub fn lookup(&self, id: TypeId) -> Option<&TypeInfo> {
-        self.vec.get(id.0)
+        self.set.get_index(id.0 as usize)
     }
 }
 

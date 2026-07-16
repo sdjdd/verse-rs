@@ -1,5 +1,8 @@
 use crate::{
-    core::{ConstId, types::TypeInfo},
+    core::{
+        ConstId,
+        types::{PredefinedTypes, TypeInfo, TypeRegistry},
+    },
     runtime::TypeId,
     vm::{FailureHandler, Function, Opcode},
 };
@@ -12,14 +15,12 @@ pub mod semantic;
 
 use ast::CompareOp;
 use ir::{ExprKind, FunctionExpr, IfExpr, Ir, Slot, TemplateElement};
-use ordermap::OrderSet;
 
 #[derive(Default)]
 struct LoopContext {
     break_jmp_target_indices: Vec<u32>,
 }
 
-#[derive(Default)]
 pub struct Compiler {
     pub bytecode: Vec<u8>,
     pub failure_handlers: Vec<FailureHandler>,
@@ -27,16 +28,32 @@ pub struct Compiler {
     loop_ctx_stack: Vec<LoopContext>,
     functions: Vec<Function>,
     start_fn_id: usize,
-    pub type_registry: OrderSet<TypeInfo>,
+    pub type_registry: TypeRegistry,
+    pub predefined_types: PredefinedTypes,
 }
 
 impl Compiler {
+    pub fn new() -> Self {
+        let mut type_reg = TypeRegistry::new();
+        let predefined_types = PredefinedTypes::install(&mut type_reg);
+        Self {
+            type_registry: type_reg,
+            predefined_types,
+            bytecode: vec![],
+            failure_handlers: vec![],
+            op_stack_size: 0,
+            loop_ctx_stack: vec![],
+            functions: vec![],
+            start_fn_id: 0,
+        }
+    }
+
     pub fn compile(&mut self, irs: Vec<Ir>) -> Vec<Function> {
         for ir in irs {
             self.compile_ir(ir);
         }
         let func = Function {
-            type_id: TypeId(self.intern_type(TypeInfo::Any)),
+            type_id: self.intern_type(TypeInfo::Any),
             bytecode: self.bytecode.clone(),
             failure_table: self.failure_handlers.clone(),
             upvalues: vec![],
@@ -120,8 +137,8 @@ impl Compiler {
         self.append_u8(op.into());
     }
 
-    fn intern_type(&mut self, type_info: TypeInfo) -> usize {
-        self.type_registry.insert_full(type_info).0
+    fn intern_type(&mut self, type_info: TypeInfo) -> TypeId {
+        self.type_registry.intern(type_info)
     }
 
     fn compile_int(&mut self, value: i64) {
@@ -217,7 +234,7 @@ impl Compiler {
             self.compile_ir(ir);
         }
         self.append_op(op);
-        self.append_u32(type_id as u32);
+        self.append_u32(type_id.0 as u32);
         self.append_u32(argc as u32);
         self.op_stack_size -= (argc as u16) - 1;
     }
@@ -318,11 +335,11 @@ impl Compiler {
     }
 
     fn compile_function(&mut self, fn_ir: FunctionExpr) {
-        let mut compiler = Compiler::default();
+        let mut compiler = Compiler::new();
         compiler.start_fn_id = self.functions.len();
         compiler.compile_ir(*fn_ir.body);
         let func = Function {
-            type_id: TypeId(self.intern_type(TypeInfo::Any)),
+            type_id: self.intern_type(TypeInfo::Any),
             bytecode: compiler.bytecode,
             failure_table: compiler.failure_handlers,
             upvalues: fn_ir.upvalues,
@@ -379,7 +396,7 @@ impl Compiler {
     fn compile_type_literal(&mut self, type_info: TypeInfo) {
         let type_id = self.intern_type(type_info);
         self.append_op(Opcode::PushType);
-        self.append_u32(type_id as u32);
+        self.append_u32(type_id.0 as u32);
         self.op_stack_size += 1;
     }
 
@@ -387,7 +404,7 @@ impl Compiler {
         let type_id = self.intern_type(type_info);
         self.compile_ir(value);
         self.append_op(Opcode::Cast);
-        self.append_u32(type_id as u32);
+        self.append_u32(type_id.0 as u32);
     }
 
     fn compile_get_len(&mut self, value: Ir) {

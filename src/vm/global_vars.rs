@@ -1,11 +1,9 @@
-use ordermap::OrderSet;
-
 use crate::{
     core::{
         PredefinedSymbols, Symbol,
-        types::{PredefinedTypes, TypeInfo},
+        types::{PredefinedTypes, TypeInfo, TypeRegistry},
     },
-    runtime::{FnKind, TypeId, Value, builtin_funcs, heap::Heap},
+    runtime::{FnKind, Value, builtin_funcs, heap::Heap},
     vm::Vm,
 };
 
@@ -13,7 +11,7 @@ pub fn install(
     vm: &mut Vm,
     ps: PredefinedSymbols,
     pt: PredefinedTypes,
-    type_reg: &mut OrderSet<TypeInfo>,
+    type_reg: &mut TypeRegistry,
     get_symbol_slot: impl Fn(Symbol) -> usize,
 ) {
     let global_vars = [
@@ -28,7 +26,10 @@ pub fn install(
         (
             ps.s_Print,
             Value::Function {
-                type_id: TypeId(type_reg.insert_full(TypeInfo::Any).0),
+                type_id: type_reg.intern(TypeInfo::Function {
+                    params: vec![TypeInfo::Any],
+                    ret: Box::new(TypeInfo::Void),
+                }),
                 kind: FnKind::Native(builtin_funcs::print),
             },
         ),

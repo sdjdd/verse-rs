@@ -7,7 +7,7 @@ use super::ir::{self, Ir, Slot, UpvalueDesc};
 use super::lexer::Span;
 use crate::core::{
     PredefinedSymbols, Symbol, SymbolRegistry,
-    types::{PredefinedTypes, TypeInfo, TypeRegistry},
+    types::{TypeInfo, TypeRegistry},
 };
 
 #[derive(Debug, Clone)]
@@ -71,7 +71,6 @@ struct LoopInfo {}
 
 pub struct SemanticAnalyzer {
     pub builtin_symbols: PredefinedSymbols,
-    pub predefined_types: PredefinedTypes,
     pub errors: Vec<SemanticError>,
 
     pub scopes: Vec<Scope>,
@@ -83,10 +82,8 @@ pub struct SemanticAnalyzer {
 impl SemanticAnalyzer {
     pub fn new(symbol_table: &mut SymbolRegistry) -> Self {
         let mut global_scope = Scope::new(false);
-        let mut types = TypeRegistry::default();
 
         let bs = PredefinedSymbols::install(symbol_table);
-        let bt = PredefinedTypes::install(&mut types);
 
         let predefined_types = [
             (bs.s_int, TypeInfo::Int),
@@ -99,7 +96,13 @@ impl SemanticAnalyzer {
             (bs.s_void, TypeInfo::Void),
         ];
 
-        let global_vars = [(bs.s_Print, TypeInfo::Any)];
+        let global_vars = [(
+            bs.s_Print,
+            TypeInfo::Function {
+                params: vec![TypeInfo::Any],
+                ret: TypeInfo::Void.into(),
+            },
+        )];
 
         for (s, t) in predefined_types {
             global_scope.declare(s, TypeInfo::Type(t.into()), false);
@@ -112,9 +115,8 @@ impl SemanticAnalyzer {
         Self {
             scopes: vec![global_scope],
             builtin_symbols: bs,
-            predefined_types: bt,
             errors: vec![],
-            types,
+            types: TypeRegistry::default(),
             loop_stack: vec![],
         }
     }
@@ -666,19 +668,6 @@ impl SemanticAnalyzer {
                     ty: *return_type,
                 })
             }
-            TypeInfo::Any => {
-                // TODO: handle builtin functions
-                for arg in &expr.args {
-                    arg_hir_ids.push(self.handle_expr(arg)?);
-                }
-                Some(Ir {
-                    kind: ir::ExprKind::Call(ir::CallExpr {
-                        callee: callee_ar.into(),
-                        args: arg_hir_ids,
-                    }),
-                    ty: TypeInfo::Any,
-                })
-            }
             TypeInfo::Tuple(elements) => {
                 if expr.args.len() != 1 {
                     self.errors.push(SemanticError::ArgsCountMismatch { span });
@@ -707,7 +696,6 @@ impl SemanticAnalyzer {
                 }
             }
             TypeInfo::Type(type_id) => self.handle_type_cast(span, &expr.args, type_id),
-            TypeInfo::Int => self.handle_type_cast(span, &expr.args, &TypeInfo::Int),
             _ => {
                 self.errors.push(SemanticError::NotCallable {
                     callee: expr.callee.as_ref().clone(),

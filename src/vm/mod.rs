@@ -335,7 +335,7 @@ impl Vm {
 
     fn exec_push_type(&mut self) {
         let type_id = self.read_u32();
-        self.op_stack.push(Value::Type(TypeId(type_id as usize)));
+        self.op_stack.push(Value::Type(TypeId(type_id)));
     }
 
     fn exec_store_local(&mut self) {
@@ -391,7 +391,7 @@ impl Vm {
         let start = self.op_stack.len() - elem_cnt as usize;
         let elements = self.op_stack.split_off(start);
         let value = Value::Tuple {
-            ty: TypeId(type_id as usize),
+            ty: TypeId(type_id),
             elements,
         };
         self.op_stack.push(value);
@@ -403,7 +403,7 @@ impl Vm {
         let start = self.op_stack.len() - elem_cnt as usize;
         let elements = self.op_stack.split_off(start);
         let value = Value::Array {
-            type_id: TypeId(type_id as usize),
+            type_id: TypeId(type_id),
             elements,
         };
         self.op_stack.push(value);
@@ -624,12 +624,14 @@ impl Vm {
     }
 
     fn exec_cast(&mut self) {
-        let type_id = TypeId(self.read_u32() as usize);
+        let type_id = TypeId(self.read_u32());
         let value = self.op_stack.last().unwrap();
+        let value = self.deref(value);
         let ok = match value {
             Value::Integer(_) => type_id == self.pre_types.t_int,
+            Value::String(_) => type_id == self.pre_types.t_string,
             Value::Tuple { ty, .. } => *ty == type_id,
-            _ => unimplemented!(),
+            _ => unimplemented!("{value:?}"),
         };
         if !ok {
             self.op_stack.pop();
