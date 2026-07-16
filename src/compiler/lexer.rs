@@ -33,6 +33,9 @@ pub enum Token {
     #[regex(r"\r?\n")]
     Newline,
 
+    #[token("_")]
+    Underscore,
+
     #[token(".")]
     Dot,
 
@@ -150,6 +153,12 @@ pub enum Token {
 
     #[token("var")]
     Var,
+
+    #[token("type")]
+    Type,
+
+    #[token("tuple")]
+    Tuple,
 
     #[regex("[A-Za-z][A-Za-z0-9_]*")]
     #[regex("_[A-Za-z0-9_]+")]

@@ -44,7 +44,6 @@ pub struct PredefinedSymbols {
     pub s_logic: Symbol,
     pub s_option: Symbol,
     pub s_string: Symbol,
-    pub s_tuple: Symbol,
     pub s_void: Symbol,
 }
 
@@ -62,7 +61,6 @@ impl PredefinedSymbols {
             s_logic: reg.intern("logic"),
             s_option: reg.intern("option"),
             s_string: reg.intern("string"),
-            s_tuple: reg.intern("tuple"),
             s_void: reg.intern("void"),
         }
     }

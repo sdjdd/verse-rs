@@ -25,11 +25,11 @@ fn main() {
         print_parser_error(err, &source);
     }
     if parser.errors.is_empty() {
-        let mut semantic_ctx = SemanticAnalyzer::new(&mut parser.symbol_table);
+        let mut semantic_ctx = SemanticAnalyzer::new(&mut parser.symbol_reg);
 
         let entry = semantic_ctx.analyze(&program.expressions);
         for err in &semantic_ctx.errors {
-            print_semantic_error(&err, &source, &parser.symbol_table);
+            print_semantic_error(&err, &source, &parser.symbol_reg);
         }
         if semantic_ctx.errors.is_empty() {
             let mut compiler = Compiler::default();

@@ -248,10 +248,10 @@ impl SemanticAnalyzer {
             ExprKind::Binary(e) => self.handle_binary_expr(expr.span.clone(), e),
             ExprKind::Unary(e) => self.handle_unary_expr(e),
             ExprKind::Type(e) => {
-                let type_id = self.handle_type_expr(e);
+                let type_info = self.handle_type_expr(e);
                 Some(Ir {
-                    kind: ir::ExprKind::Type(type_id.clone()),
-                    ty: type_id,
+                    kind: ir::ExprKind::Type(type_info.clone()),
+                    ty: TypeInfo::Type(type_info.into()),
                 })
             }
             ExprKind::Member(expr) => self.handle_member_expr(expr),

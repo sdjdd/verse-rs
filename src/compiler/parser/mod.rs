@@ -4,7 +4,7 @@ use super::ast::*;
 use super::lexer::{LexerError, Span, Token};
 use crate::{
     compiler::parser::const_pool::ConstPool,
-    core::{ConstId, ConstValue, PredefinedSymbols, SymbolRegistry},
+    core::{ConstId, ConstValue, SymbolRegistry},
 };
 
 mod const_pool;
@@ -36,25 +36,20 @@ pub struct Parser<'src> {
     tokens: &'src [(Token, Span)],
     pos: usize,
     current_token_span: Span,
-    pub symbol_table: SymbolRegistry,
-    builtin_symbols: PredefinedSymbols,
 
+    pub symbol_reg: SymbolRegistry,
     pub const_pool: ConstPool,
     pub errors: Vec<ParseError>,
 }
 
 impl<'src> Parser<'src> {
     pub fn new(source: &'src str, tokens: &'src [(Token, Span)]) -> Self {
-        let mut st = SymbolRegistry::new();
-        let builtin_symbols = PredefinedSymbols::install(&mut st);
-
         Self {
             source,
             tokens,
             pos: 0,
             current_token_span: 0..0,
-            symbol_table: st,
-            builtin_symbols,
+            symbol_reg: SymbolRegistry::new(),
             const_pool: ConstPool::new(),
             errors: Vec::new(),
         }
@@ -177,11 +172,30 @@ impl<'src> Parser<'src> {
             Token::Id if self.looks_like_function_signature() => self.parse_function_expr(),
             Token::Loop => self.parse_loop_expr(),
             Token::Break => self.parse_break_expr(),
+            Token::Type | Token::Tuple => {
+                let type_expr = self.parse_type_expr()?;
+                Ok(Expression {
+                    span: type_expr.span.clone(),
+                    kind: ExprKind::Type(type_expr),
+                })
+            }
             _ => self.parse_decl_expr(),
         }
     }
 
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
+        if self.consume_if(Token::Type) {
+            if self.consume_if(Token::LBrace) {
+                let expr = self.parse_type_expr()?;
+                self.expect(Token::RBrace)?;
+                return Ok(expr);
+            }
+            return Ok(TypeExpr {
+                span: self.span(),
+                kind: TypeExprKind::Type,
+            });
+        }
+
         if self.consume_if(Token::Question) {
             let start = self.span().start;
             let type_expr = self.parse_type_expr()?;
@@ -201,33 +215,50 @@ impl<'src> Parser<'src> {
             });
         }
 
-        self.expect(Token::Id)?;
-        let start = self.span().start;
-        match self.slice() {
-            "tuple" => {
-                self.expect(Token::LParen)?;
-                let mut args = vec![self.parse_type_expr()?];
-                while self.consume_if(Token::Comma) {
-                    args.push(self.parse_type_expr()?);
-                }
-                self.expect(Token::RParen)?;
-                Ok(TypeExpr {
-                    kind: TypeExprKind::Tuple(args),
-                    span: start..self.span().end,
-                })
+        if self.consume_if(Token::Tuple) {
+            let start = self.span().start;
+            self.expect(Token::LParen)?;
+            let mut args = vec![self.parse_type_expr()?];
+            while self.consume_if(Token::Comma) {
+                args.push(self.parse_type_expr()?);
             }
-            "type" => Ok(TypeExpr {
-                kind: TypeExprKind::Type,
-                span: self.span().clone(),
-            }),
-            _ => {
-                let symbol = self.symbol_table.intern(self.slice());
-                Ok(TypeExpr {
-                    kind: TypeExprKind::Named(symbol),
-                    span: start..self.span().end,
-                })
-            }
+            self.expect(Token::RParen)?;
+            return Ok(TypeExpr {
+                kind: TypeExprKind::Tuple(args),
+                span: start..self.span().end,
+            });
         }
+
+        if self.consume_if(Token::Underscore) {
+            let start = self.span().start;
+            self.expect(Token::LParen)?;
+
+            let mut params = vec![];
+            while !self.consume_if(Token::RParen) {
+                self.expect(Token::Colon)?;
+                let param = self.parse_type_expr()?;
+                params.push(param);
+                self.consume_if(Token::Comma);
+            }
+
+            self.expect(Token::Colon)?;
+            let ret = self.parse_type_expr()?;
+
+            return Ok(TypeExpr {
+                span: start..ret.span.end,
+                kind: TypeExprKind::Function {
+                    params,
+                    ret: ret.into(),
+                },
+            });
+        }
+
+        self.expect(Token::Id)?;
+        let symbol = self.symbol_reg.intern(self.slice());
+        Ok(TypeExpr {
+            kind: TypeExprKind::Named(symbol),
+            span: self.span(),
+        })
     }
 
     fn parse_decl_expr(&mut self) -> ParseResult<Expression> {
@@ -276,7 +307,7 @@ impl<'src> Parser<'src> {
         let start = self.span().start;
 
         self.expect(Token::Id)?;
-        let symbol = self.symbol_table.intern(self.slice());
+        let symbol = self.symbol_reg.intern(self.slice());
         let name = IdExpr::new(symbol);
 
         self.expect(Token::Colon)?;
@@ -521,19 +552,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_call_expr(&mut self) -> ParseResult<Expression> {
-        let pos = self.pos;
         let mut callee = self.parse_lhs_expr()?;
-
-        if let ExprKind::Id(id_expr) = &callee.kind
-            && id_expr.symbol == self.builtin_symbols.s_tuple
-        {
-            self.pos = pos;
-            let type_expr = self.parse_type_expr()?;
-            return Ok(Expression {
-                span: type_expr.span.clone(),
-                kind: ExprKind::Type(type_expr),
-            });
-        }
 
         while self.consume_if(Token::LParen) {
             let mut args = vec![];
@@ -563,7 +582,7 @@ impl<'src> Parser<'src> {
     fn parse_function_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::Id)?;
         let start = self.span().start;
-        let name = self.symbol_table.intern(self.slice());
+        let name = self.symbol_reg.intern(self.slice());
 
         let mut parse_func_signature = || -> ParseResult<(Vec<FunctionParam>, TypeExpr)> {
             self.expect(Token::LParen)?;
@@ -572,7 +591,7 @@ impl<'src> Parser<'src> {
                 loop {
                     self.expect(Token::Id)?;
                     let param_name = self.slice();
-                    let symbol = self.symbol_table.intern(param_name);
+                    let symbol = self.symbol_reg.intern(param_name);
                     self.expect(Token::Colon)?;
                     params.push(FunctionParam {
                         name: symbol,
@@ -633,7 +652,7 @@ impl<'src> Parser<'src> {
 
     fn parse_identifier_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::Id)?;
-        let symbol = self.symbol_table.intern(self.slice());
+        let symbol = self.symbol_reg.intern(self.slice());
         let expr = self.make_expr(self.span(), IdExpr::new(symbol));
 
         if self.consume_if(Token::LBrace) {
