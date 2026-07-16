@@ -664,7 +664,8 @@ impl Vm {
         let value = self.deref(&value);
         let len = match value {
             Value::String(s) => s.len(),
-            _ => unimplemented!(),
+            Value::Array { elements, .. } => elements.len(),
+            _ => unreachable!(),
         };
         self.op_stack.push(Value::Integer(len as i64));
     }

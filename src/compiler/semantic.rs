@@ -843,7 +843,7 @@ impl SemanticAnalyzer {
     fn handle_member_expr(&mut self, expr: &MemberExpr) -> Option<Ir> {
         let obj = self.handle_expr(&expr.object)?;
 
-        if obj.ty == TypeInfo::String {
+        if matches!(obj.ty, TypeInfo::String | TypeInfo::Array(_)) {
             if let ExprKind::Id(id_expr) = &expr.property.kind {
                 if id_expr.symbol == self.builtin_symbols.s_Length {
                     return Some(Ir {
