@@ -64,7 +64,7 @@ impl Compiler {
             ExprKind::Char32(v) => self.compile_char32(v),
             ExprKind::String(id) => self.compile_string(id),
             ExprKind::Logic(v) => self.compile_logic(v),
-            ExprKind::Option(v) => self.compile_option(v),
+            ExprKind::Option(v) => self.compile_option(ir.ty, v),
             ExprKind::StoreLocal { slot, value } => self.compile_store_local(slot, *value),
             ExprKind::LoadLocal { slot } => self.compile_load_local(slot),
             ExprKind::StoreGlobal { slot, value } => self.compile_store_global(slot, *value),
@@ -85,7 +85,7 @@ impl Compiler {
             ExprKind::Loop(ir) => self.compile_loop(*ir),
             ExprKind::Break => self.compile_break(),
             ExprKind::Block(irs) => self.compile_block(irs),
-            ExprKind::Func(ir) => self.compile_function(ir),
+            ExprKind::Func(fn_ir) => self.compile_function(fn_ir, ir.ty),
             ExprKind::Call(ir) => self.compile_call(*ir.callee, ir.args),
             ExprKind::Template(elems) => self.compile_template(elems),
             ExprKind::Type(type_id) => self.compile_type_literal(type_id),
@@ -174,12 +174,15 @@ impl Compiler {
         self.op_stack_size += 1;
     }
 
-    fn compile_option(&mut self, value: Option<Box<Ir>>) {
+    fn compile_option(&mut self, type_info: TypeInfo, value: Option<Box<Ir>>) {
+        let type_id = self.intern_type(type_info);
         if let Some(value) = value {
             self.compile_ir(*value);
             self.append_op(Opcode::MakeOption);
+            self.append_u32(type_id.0);
         } else {
             self.append_op(Opcode::PushNone);
+            self.append_u32(type_id.0);
             self.op_stack_size += 1;
         }
     }
@@ -328,12 +331,12 @@ impl Compiler {
         }
     }
 
-    fn compile_function(&mut self, fn_ir: FunctionExpr) {
+    fn compile_function(&mut self, fn_ir: FunctionExpr, fn_type: TypeInfo) {
         let mut compiler = Compiler::new();
         compiler.start_fn_id = self.functions.len();
         compiler.compile_ir(*fn_ir.body);
         let func = Function {
-            type_id: self.intern_type(TypeInfo::Any),
+            type_id: self.intern_type(fn_type),
             bytecode: compiler.bytecode,
             failure_table: compiler.failure_handlers,
             upvalues: fn_ir.upvalues,

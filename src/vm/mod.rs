@@ -330,7 +330,11 @@ impl Vm {
     }
 
     fn exec_push_none(&mut self) {
-        self.op_stack.push(Value::Option(None));
+        let type_id = TypeId(self.read_u32());
+        self.op_stack.push(Value::Option {
+            type_id,
+            value: None,
+        });
     }
 
     fn exec_push_type(&mut self) {
@@ -381,19 +385,20 @@ impl Vm {
     }
 
     fn exec_make_option(&mut self) {
+        let type_id = TypeId(self.read_u32());
         let val = self.op_stack.pop().unwrap();
-        self.op_stack.push(Value::Option(Some(val.into())));
+        self.op_stack.push(Value::Option {
+            type_id,
+            value: Some(val.into()),
+        });
     }
 
     fn exec_make_tuple(&mut self) {
-        let type_id = self.read_u32();
+        let type_id = TypeId(self.read_u32());
         let elem_cnt = self.read_u32();
         let start = self.op_stack.len() - elem_cnt as usize;
         let elements = self.op_stack.split_off(start);
-        let value = Value::Tuple {
-            ty: TypeId(type_id),
-            elements,
-        };
+        let value = Value::Tuple { type_id, elements };
         self.op_stack.push(value);
     }
 
@@ -624,14 +629,25 @@ impl Vm {
     }
 
     fn exec_cast(&mut self) {
-        let type_id = TypeId(self.read_u32());
+        let expect = TypeId(self.read_u32());
         let value = self.op_stack.last().unwrap();
         let value = self.deref(value);
         let ok = match value {
-            Value::Integer(_) => type_id == self.pre_types.t_int,
-            Value::String(_) => type_id == self.pre_types.t_string,
-            Value::Tuple { ty, .. } => *ty == type_id,
-            _ => unimplemented!("{value:?}"),
+            Value::Void => expect == self.pre_types.t_void,
+            Value::Integer(_) => expect == self.pre_types.t_int,
+            Value::Rational(..) => expect == self.pre_types.t_rational,
+            Value::Float(_) => expect == self.pre_types.t_float,
+            Value::Char(_) => expect == self.pre_types.t_char,
+            Value::Char32(_) => expect == self.pre_types.t_char32,
+            Value::String(_) => expect == self.pre_types.t_string,
+            Value::False => expect == self.pre_types.t_false,
+            Value::Logic(_) => expect == self.pre_types.t_logic,
+            Value::Option { type_id, .. } => expect == *type_id,
+            Value::Tuple { type_id, .. } => expect == *type_id,
+            Value::Array { type_id, .. } => expect == *type_id,
+            Value::Function { type_id, .. } => expect == *type_id,
+            Value::Type(type_id) => expect == *type_id,
+            Value::Ref(_) => unreachable!(),
         };
         if !ok {
             self.op_stack.pop();

@@ -593,13 +593,13 @@ impl SemanticAnalyzer {
         }
 
         let return_void = return_type == TypeInfo::Void;
-        let type_id = TypeInfo::Function {
+        let type_info = TypeInfo::Function {
             params: param_types,
             ret: return_type.into(),
         };
 
         let upvalues = scope.upvalues.into_iter().collect();
-        let func_slot = self.declare(expr.name, type_id.clone(), false);
+        let func_slot = self.declare(expr.name, type_info.clone(), false);
 
         Some(Ir {
             kind: ir::ExprKind::Func(ir::FunctionExpr {
@@ -609,7 +609,7 @@ impl SemanticAnalyzer {
                 return_void,
                 upvalues,
             }),
-            ty: type_id,
+            ty: type_info,
         })
     }
 

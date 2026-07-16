@@ -1,3 +1,5 @@
+use derive_more::From;
+
 use crate::runtime::heap::{Heap, ObjectId};
 
 pub mod builtin_funcs;
@@ -26,7 +28,7 @@ pub enum FnKind {
     },
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, From)]
 pub struct TypeId(pub u32);
 
 #[derive(Debug, Clone, Default)]
@@ -41,9 +43,12 @@ pub enum Value {
     String(String),
     False,
     Logic(bool),
-    Option(Option<Box<Value>>),
+    Option {
+        type_id: TypeId,
+        value: Option<Box<Value>>,
+    },
     Tuple {
-        ty: TypeId,
+        type_id: TypeId,
         elements: Vec<Value>,
     },
     Array {

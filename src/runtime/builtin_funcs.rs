@@ -46,7 +46,7 @@ pub fn write_value(
         }
         Value::Function { .. } => write!(w, "[Function]"),
         Value::Type { .. } => write!(w, "[Type]"),
-        Value::Option(_) => write!(w, "[Option]"),
+        Value::Option { .. } => write!(w, "[Option]"),
         Value::Ref(id) => {
             let value = loop {
                 let value = heap.fetch_obj(*id);
