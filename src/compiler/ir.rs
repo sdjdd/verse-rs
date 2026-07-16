@@ -1,5 +1,6 @@
 use crate::compiler::ast::{BinaryOp, CompareOp};
-use crate::{core::ConstId, runtime::TypeId};
+use crate::core::ConstId;
+use crate::core::types::TypeInfo;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Slot(pub usize);
@@ -7,7 +8,7 @@ pub struct Slot(pub usize);
 #[derive(Debug, Clone)]
 pub struct Ir {
     pub kind: ExprKind,
-    pub ty: TypeId,
+    pub ty: TypeInfo,
 }
 
 #[derive(Debug, Clone)]
@@ -43,9 +44,9 @@ pub enum ExprKind {
     CompareChain(CompareChainExpr),
     Block(Vec<Ir>),
     Func(FunctionExpr),
-    Type(TypeId),
+    Type(TypeInfo),
 
-    Cast { ty: TypeId, value: Box<Ir> },
+    Cast { ty: TypeInfo, value: Box<Ir> },
     GetLength(Box<Ir>),
     Concat(Vec<Ir>),
 }

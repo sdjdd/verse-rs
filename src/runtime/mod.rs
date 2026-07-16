@@ -51,6 +51,7 @@ pub enum Value {
         elements: Vec<Value>,
     },
     Function {
+        type_id: TypeId,
         kind: FnKind,
     },
     Type(TypeId),

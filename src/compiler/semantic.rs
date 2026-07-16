@@ -5,18 +5,15 @@ use thiserror::Error;
 use super::ast::*;
 use super::ir::{self, Ir, Slot, UpvalueDesc};
 use super::lexer::Span;
-use crate::{
-    core::{
-        PredefinedSymbols, Symbol, SymbolRegistry,
-        types::{PredefinedTypes, TypeInfo, TypeRegistry},
-    },
-    runtime::{FnKind, TypeId, Value, builtin_funcs},
+use crate::core::{
+    PredefinedSymbols, Symbol, SymbolRegistry,
+    types::{PredefinedTypes, TypeInfo, TypeRegistry},
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Variable {
     pub slot: Slot,
-    pub type_id: TypeId,
+    pub type_info: TypeInfo,
     pub mutable: bool,
 }
 
@@ -24,7 +21,7 @@ struct LookupResult {
     is_global: bool,
     is_upvalue: bool,
     slot: Slot,
-    type_id: TypeId,
+    type_info: TypeInfo,
     mutable: bool,
     scope_index: usize,
 }
@@ -46,9 +43,9 @@ impl Scope {
         }
     }
 
-    fn declare(&mut self, symbol: Symbol, type_id: TypeId, mutable: bool) -> Slot {
+    fn declare(&mut self, symbol: Symbol, type_info: TypeInfo, mutable: bool) -> Slot {
         if let Some(binding) = self.variables.get_mut(&symbol) {
-            binding.type_id = type_id;
+            binding.type_info = type_info;
             binding.mutable = mutable;
             return binding.slot;
         }
@@ -58,7 +55,7 @@ impl Scope {
             symbol,
             Variable {
                 slot,
-                type_id,
+                type_info,
                 mutable,
             },
         );
@@ -91,20 +88,25 @@ impl SemanticAnalyzer {
         let bs = PredefinedSymbols::install(symbol_table);
         let bt = PredefinedTypes::install(&mut types);
 
-        let predefined_vars = [
-            (bs.s_int, TypeInfo::Type(bt.t_int)),
-            (bs.s_float, TypeInfo::Type(bt.t_float)),
-            (bs.s_logic, TypeInfo::Type(bt.t_logic)),
-            (bs.s_char, TypeInfo::Type(bt.t_char)),
-            (bs.s_char32, TypeInfo::Type(bt.t_char32)),
-            (bs.s_string, TypeInfo::Type(bt.t_string)),
-            (bs.s_any, TypeInfo::Type(bt.t_any)),
-            (bs.s_void, TypeInfo::Type(bt.t_void)),
-            (bs.s_Print, TypeInfo::Any),
+        let predefined_types = [
+            (bs.s_int, TypeInfo::Int),
+            (bs.s_float, TypeInfo::Float),
+            (bs.s_logic, TypeInfo::Logic),
+            (bs.s_char, TypeInfo::Char),
+            (bs.s_char32, TypeInfo::Char32),
+            (bs.s_string, TypeInfo::String),
+            (bs.s_any, TypeInfo::Any),
+            (bs.s_void, TypeInfo::Void),
         ];
 
-        for (s, t) in predefined_vars {
-            global_scope.declare(s, types.intern(t), false);
+        let global_vars = [(bs.s_Print, TypeInfo::Any)];
+
+        for (s, t) in predefined_types {
+            global_scope.declare(s, TypeInfo::Type(t.into()), false);
+        }
+
+        for (s, t) in global_vars {
+            global_scope.declare(s, t, false);
         }
 
         Self {
@@ -117,34 +119,8 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn get_global_vars(&self) -> Vec<Value> {
-        let ps = self.builtin_symbols;
-        let pt = self.predefined_types;
-
-        let global_bindings = [
-            (ps.s_int, Value::Type(pt.t_int)),
-            (ps.s_float, Value::Type(pt.t_float)),
-            (ps.s_logic, Value::Type(pt.t_logic)),
-            (ps.s_char, Value::Type(pt.t_char)),
-            (ps.s_char32, Value::Type(pt.t_char32)),
-            (ps.s_string, Value::Type(pt.t_string)),
-            (ps.s_any, Value::Type(pt.t_any)),
-            (ps.s_void, Value::Type(pt.t_void)),
-            (
-                ps.s_Print,
-                Value::Function {
-                    kind: FnKind::Native(builtin_funcs::print),
-                },
-            ),
-        ];
-
-        let mut global_vars: Vec<_> = global_bindings
-            .into_iter()
-            .map(|(symbol, value)| (self.scopes[0].lookup(symbol).unwrap().slot.0, value))
-            .collect();
-
-        global_vars.sort_by(|a, b| a.0.cmp(&b.0));
-        global_vars.into_iter().map(|(_, v)| v).collect()
+    pub fn get_global_symbol_index(&self, symbol: Symbol) -> usize {
+        self.scopes[0].lookup(symbol).unwrap().slot.0
     }
 
     fn push_scope(&mut self, is_function: bool) {
@@ -158,12 +134,12 @@ impl SemanticAnalyzer {
         self.scopes.pop().unwrap()
     }
 
-    pub fn declare(&mut self, symbol: Symbol, type_id: TypeId, mutable: bool) -> Slot {
+    pub fn declare(&mut self, symbol: Symbol, type_info: TypeInfo, mutable: bool) -> Slot {
         // TODO: check shadowing
         self.scopes
             .last_mut()
             .unwrap()
-            .declare(symbol, type_id, mutable)
+            .declare(symbol, type_info, mutable)
     }
 
     fn lookup(&mut self, symbol: &Symbol) -> Option<LookupResult> {
@@ -174,7 +150,7 @@ impl SemanticAnalyzer {
                     is_global: index == 0 && self.scopes.len() > 1,
                     is_upvalue: captured,
                     slot: var.slot,
-                    type_id: var.type_id,
+                    type_info: var.type_info.clone(),
                     mutable: var.mutable,
                     scope_index: index,
                 };
@@ -200,18 +176,15 @@ impl SemanticAnalyzer {
         parent_index.unwrap()
     }
 
-    fn is_assignable_to(&self, from: TypeId, to: TypeId) -> bool {
-        if from == to || to == self.predefined_types.t_any {
+    fn is_assignable_to(&self, from: &TypeInfo, to: &TypeInfo) -> bool {
+        if from == to || to == &TypeInfo::Any {
             return true;
         }
-
-        let from = self.types.lookup(from).unwrap();
-        let to = self.types.lookup(to).unwrap();
 
         match (from, to) {
             (TypeInfo::True | TypeInfo::False, TypeInfo::Logic) => true,
             (TypeInfo::False, TypeInfo::Option(_)) => true,
-            (TypeInfo::Option(from), TypeInfo::Option(to)) => self.is_assignable_to(*from, *to),
+            (TypeInfo::Option(from), TypeInfo::Option(to)) => self.is_assignable_to(from, to),
             _ => false,
         }
     }
@@ -222,14 +195,6 @@ impl SemanticAnalyzer {
 
     fn pop_loop(&mut self) {
         self.loop_stack.pop();
-    }
-
-    fn emit_type_mismatch_error(&mut self, span: Span, expect: TypeId, found: TypeId) {
-        self.errors.push(SemanticError::TypeMismatch {
-            span,
-            expect,
-            found,
-        });
     }
 
     pub fn analyze(&mut self, program: &[Expression]) -> Vec<Ir> {
@@ -244,24 +209,24 @@ impl SemanticAnalyzer {
         match &expr.kind {
             ExprKind::Integer(v) => Ir {
                 kind: ir::ExprKind::Int(*v),
-                ty: self.predefined_types.t_int,
+                ty: TypeInfo::Int,
             },
             ExprKind::Float(v) => Ir {
                 kind: ir::ExprKind::Float(*v),
-                ty: self.predefined_types.t_float,
+                ty: TypeInfo::Float,
             },
             ExprKind::Logic(v) => self.handle_logic_expr(*v),
             ExprKind::Char(v) => Ir {
                 kind: ir::ExprKind::Char(*v),
-                ty: self.predefined_types.t_char,
+                ty: TypeInfo::Char,
             },
             ExprKind::Char32(v) => Ir {
                 kind: ir::ExprKind::Char32(*v),
-                ty: self.predefined_types.t_char32,
+                ty: TypeInfo::Char32,
             },
             ExprKind::String(v) => Ir {
                 kind: ir::ExprKind::String(*v),
-                ty: self.predefined_types.t_string,
+                ty: TypeInfo::String,
             },
             ExprKind::Decl(e) => self.handle_decl_expr(e.target, e.typ.as_ref(), &e.value, false),
             ExprKind::VarDecl(e) => {
@@ -283,7 +248,7 @@ impl SemanticAnalyzer {
             ExprKind::Type(e) => {
                 let type_id = self.handle_type_expr(e);
                 Ir {
-                    kind: ir::ExprKind::Type(type_id),
+                    kind: ir::ExprKind::Type(type_id.clone()),
                     ty: type_id,
                 }
             }
@@ -295,7 +260,7 @@ impl SemanticAnalyzer {
     fn placeholder_ir(&self) -> Ir {
         Ir {
             kind: ir::ExprKind::Nop,
-            ty: self.predefined_types.t_any,
+            ty: TypeInfo::Any,
         }
     }
 
@@ -303,12 +268,12 @@ impl SemanticAnalyzer {
         if value {
             Ir {
                 kind: ir::ExprKind::Logic(value),
-                ty: self.predefined_types.t_logic,
+                ty: TypeInfo::Logic,
             }
         } else {
             Ir {
                 kind: ir::ExprKind::Logic(value),
-                ty: self.predefined_types.t_false,
+                ty: TypeInfo::False,
             }
         }
     }
@@ -316,26 +281,26 @@ impl SemanticAnalyzer {
     fn handle_decl_option(
         &mut self,
         name: Symbol,
-        ty: TypeId,
+        ty: TypeInfo,
         value: &Expression,
         mutable: bool,
     ) -> Ir {
         let value_ir = self.handle_expr(value);
 
-        let slot = self.declare(name, ty, mutable);
+        let slot = self.declare(name, ty.clone(), mutable);
 
-        if value_ir.ty == self.predefined_types.t_false {
+        if value_ir.ty == TypeInfo::False {
             Ir {
                 kind: ir::ExprKind::StoreLocal {
                     slot,
                     value: Box::new(Ir {
                         kind: ir::ExprKind::Option(None),
-                        ty,
+                        ty: ty.clone(),
                     }),
                 },
                 ty,
             }
-        } else if self.is_assignable_to(value_ir.ty, ty) {
+        } else if self.is_assignable_to(&value_ir.ty, &ty) {
             Ir {
                 kind: ir::ExprKind::StoreLocal {
                     slot,
@@ -369,17 +334,21 @@ impl SemanticAnalyzer {
             }
 
             let value_ir = self.handle_expr(value);
-            if !self.is_assignable_to(value_ir.ty, decl_type) {
-                self.emit_type_mismatch_error(value.span.clone(), decl_type, value_ir.ty);
+            if !self.is_assignable_to(&value_ir.ty, &decl_type) {
+                self.errors.push(SemanticError::TypeMismatch {
+                    span: value.span.clone(),
+                    expect: decl_type.clone(),
+                    found: value_ir.ty.clone(),
+                })
             }
             (value_ir, decl_type)
         } else {
             let value_ir = self.handle_expr(value);
-            let value_ty = value_ir.ty;
+            let value_ty = value_ir.ty.clone();
             (value_ir, value_ty)
         };
 
-        let slot = self.declare(name, binding_type, mutable);
+        let slot = self.declare(name, binding_type.clone(), mutable);
 
         Ir {
             kind: ir::ExprKind::StoreLocal {
@@ -392,17 +361,17 @@ impl SemanticAnalyzer {
 
     fn handle_set_expr(&mut self, expr: &SetExpr) -> Ir {
         let value_ir = self.handle_expr(&expr.expr);
-        let value_type = value_ir.ty;
+        let value_type = value_ir.ty.clone();
 
         match &expr.target.kind {
             LValueKind::Id(id_expr) => {
                 if let Some(var) = self.lookup(&id_expr.symbol) {
-                    if var.type_id != value_type {
-                        self.emit_type_mismatch_error(
-                            expr.expr.span.clone(),
-                            var.type_id,
-                            value_type,
-                        );
+                    if var.type_info != value_type {
+                        self.errors.push(SemanticError::TypeMismatch {
+                            span: expr.expr.span.clone(),
+                            expect: var.type_info.clone(),
+                            found: value_type,
+                        })
                     }
                     if !var.mutable {
                         self.errors.push(SemanticError::Mutability {
@@ -416,7 +385,7 @@ impl SemanticAnalyzer {
                                 slot: var.slot,
                                 value: value_ir.into(),
                             },
-                            ty: var.type_id,
+                            ty: var.type_info,
                         }
                     } else if var.is_upvalue {
                         Ir {
@@ -424,7 +393,7 @@ impl SemanticAnalyzer {
                                 index: self.capture(var.scope_index, var.slot),
                                 value: value_ir.into(),
                             },
-                            ty: var.type_id,
+                            ty: var.type_info,
                         }
                     } else {
                         Ir {
@@ -432,7 +401,7 @@ impl SemanticAnalyzer {
                                 slot: var.slot,
                                 value: value_ir.into(),
                             },
-                            ty: var.type_id,
+                            ty: var.type_info,
                         }
                     }
                 } else {
@@ -447,18 +416,18 @@ impl SemanticAnalyzer {
             if var.is_global {
                 Ir {
                     kind: ir::ExprKind::LoadGlobal { slot: var.slot },
-                    ty: var.type_id,
+                    ty: var.type_info,
                 }
             } else if var.is_upvalue {
                 let index = self.capture(var.scope_index, var.slot);
                 Ir {
                     kind: ir::ExprKind::LoadUpvalue { index },
-                    ty: var.type_id,
+                    ty: var.type_info,
                 }
             } else {
                 Ir {
                     kind: ir::ExprKind::LoadLocal { slot: var.slot },
-                    ty: var.type_id,
+                    ty: var.type_info,
                 }
             }
         } else {
@@ -479,8 +448,8 @@ impl SemanticAnalyzer {
 
         let type_id = body
             .last()
-            .map(|ar| ar.ty)
-            .unwrap_or(self.predefined_types.t_void);
+            .map(|ar| ar.ty.clone())
+            .unwrap_or(TypeInfo::Void);
 
         Ir {
             kind: ir::ExprKind::Block(body),
@@ -492,21 +461,25 @@ impl SemanticAnalyzer {
         // TODO: check if items are comparable
         // Currently just check if they are the same type
 
-        let head_ar = self.handle_expr(&expr.head);
-        let head_type = head_ar.ty;
+        let head_ir = self.handle_expr(&expr.head);
+        let head_type = head_ir.ty.clone();
 
         let mut rest_irs = vec![];
         for (_, expr) in &expr.rest {
             let ir = self.handle_expr(expr);
             if ir.ty != head_type {
-                self.emit_type_mismatch_error(expr.span.clone(), head_type, ir.ty);
+                self.errors.push(SemanticError::TypeMismatch {
+                    span: expr.span.clone(),
+                    expect: head_type.clone(),
+                    found: ir.ty.clone(),
+                });
             }
             rest_irs.push(ir);
         }
 
         Ir {
             kind: ir::ExprKind::CompareChain(ir::CompareChainExpr {
-                head: head_ar.into(),
+                head: head_ir.into(),
                 rest: rest_irs
                     .into_iter()
                     .zip(expr.rest.iter())
@@ -531,7 +504,7 @@ impl SemanticAnalyzer {
 
         Ir {
             kind: ir::ExprKind::Template(elements),
-            ty: self.predefined_types.t_string,
+            ty: TypeInfo::String,
         }
     }
 
@@ -541,15 +514,13 @@ impl SemanticAnalyzer {
             .iter()
             .map(|el| {
                 let ir = self.handle_expr(el);
-                (ir.ty, ir)
+                (ir.ty.clone(), ir)
             })
             .unzip();
 
-        let type_id = self.types.intern(TypeInfo::Tuple(elem_types));
-
         Ir {
             kind: ir::ExprKind::Tuple(elem_irs),
-            ty: type_id,
+            ty: TypeInfo::Tuple(elem_types),
         }
     }
 
@@ -564,13 +535,13 @@ impl SemanticAnalyzer {
             let alt_ir = self.handle_expr(alt);
             self.pop_scope();
             let expr_type = if then_ir.ty != alt_ir.ty {
-                self.predefined_types.t_any
+                TypeInfo::Any
             } else {
-                then_ir.ty
+                then_ir.ty.clone()
             };
             (expr_type, Some(alt_ir))
         } else {
-            (self.types.intern(TypeInfo::Option(then_ir.ty)), None)
+            (TypeInfo::Option(then_ir.ty.clone().into()), None)
         };
 
         Ir {
@@ -587,7 +558,7 @@ impl SemanticAnalyzer {
         self.push_loop();
         let body_ir = self.handle_expr(body);
         let ir = Ir {
-            ty: self.predefined_types.t_true,
+            ty: TypeInfo::True,
             kind: ir::ExprKind::Loop(body_ir.into()),
         };
         self.pop_loop();
@@ -602,7 +573,7 @@ impl SemanticAnalyzer {
             self.placeholder_ir()
         } else {
             Ir {
-                ty: self.predefined_types.t_bottom,
+                ty: TypeInfo::Bottom,
                 kind: ir::ExprKind::Break,
             }
         }
@@ -620,49 +591,54 @@ impl SemanticAnalyzer {
         self.push_scope(true);
 
         let mut param_slots = vec![];
-        for (param_name, param_type) in param_names.iter().zip(param_types.iter()) {
-            let slot = self.declare(*param_name, *param_type, true);
+        for (param_name, param_type) in param_names.into_iter().zip(param_types.iter()) {
+            let slot = self.declare(param_name, param_type.clone(), true);
             param_slots.push(slot);
         }
 
         let body = self.handle_expr(&expr.body);
 
-        if return_type != self.predefined_types.t_void {
-            if !self.is_assignable_to(body.ty, return_type) {
-                self.emit_type_mismatch_error(expr.body.span.clone(), return_type, body.ty);
+        if return_type != TypeInfo::Void {
+            if !self.is_assignable_to(&body.ty, &return_type) {
+                self.errors.push(SemanticError::TypeMismatch {
+                    span: expr.body.span.clone(),
+                    expect: return_type.clone(),
+                    found: body.ty.clone(),
+                })
             }
         }
 
-        let type_id = self.types.intern(TypeInfo::Function {
+        let return_void = return_type == TypeInfo::Void;
+        let type_id = TypeInfo::Function {
             params: param_types,
-            ret: return_type,
-        });
+            ret: return_type.into(),
+        };
 
         let scope = self.pop_scope();
         let upvalues = scope.upvalues.into_iter().collect();
-        let func_slot = self.declare(expr.name, type_id, false);
+        let func_slot = self.declare(expr.name, type_id.clone(), false);
 
         Ir {
             kind: ir::ExprKind::Func(ir::FunctionExpr {
                 slot: func_slot,
                 params: param_slots,
                 body: body.into(),
-                return_void: return_type == self.predefined_types.t_void,
+                return_void,
                 upvalues,
             }),
             ty: type_id,
         }
     }
 
-    fn handle_type_cast(&mut self, span: Span, args: &[Expression], type_id: TypeId) -> Ir {
+    fn handle_type_cast(&mut self, span: Span, args: &[Expression], type_info: &TypeInfo) -> Ir {
         if args.len() == 1 {
             let arg = self.handle_expr(&args[0]);
             Ir {
                 kind: ir::ExprKind::Cast {
-                    ty: type_id,
+                    ty: type_info.clone(),
                     value: arg.into(),
                 },
-                ty: type_id,
+                ty: type_info.clone(),
             }
         } else {
             self.errors.push(SemanticError::ArgsCountMismatch { span });
@@ -674,26 +650,31 @@ impl SemanticAnalyzer {
         let callee_ar = self.handle_expr(&expr.callee);
 
         let mut arg_hir_ids = vec![];
-        match self.types.lookup(callee_ar.ty).cloned().unwrap() {
+        match &callee_ar.ty {
             TypeInfo::Function { params, ret } => {
                 if params.len() != expr.args.len() {
                     self.errors.push(SemanticError::ArgsCountMismatch {
                         span: expr.callee.span.clone(),
                     })
                 }
-                for (&param_type, arg) in params.iter().zip(expr.args.iter()) {
+                for (param_type, arg) in params.iter().zip(expr.args.iter()) {
                     let arg_ar = self.handle_expr(arg);
-                    if !self.is_assignable_to(arg_ar.ty, param_type) {
-                        self.emit_type_mismatch_error(arg.span.clone(), param_type, arg_ar.ty);
+                    if !self.is_assignable_to(&arg_ar.ty, param_type) {
+                        self.errors.push(SemanticError::TypeMismatch {
+                            span: arg.span.clone(),
+                            expect: param_type.clone(),
+                            found: arg_ar.ty.clone(),
+                        })
                     }
                     arg_hir_ids.push(arg_ar);
                 }
+                let return_type = ret.clone();
                 Ir {
                     kind: ir::ExprKind::Call(ir::CallExpr {
                         callee: callee_ar.into(),
                         args: arg_hir_ids,
                     }),
-                    ty: ret,
+                    ty: *return_type,
                 }
             }
             TypeInfo::Any => {
@@ -706,19 +687,20 @@ impl SemanticAnalyzer {
                         callee: callee_ar.into(),
                         args: arg_hir_ids,
                     }),
-                    ty: self.predefined_types.t_any,
+                    ty: TypeInfo::Any,
                 }
             }
             TypeInfo::Tuple(elements) => {
                 if expr.args.len() == 1 {
                     let arg = self.handle_expr(&expr.args[0]);
                     if let ir::ExprKind::Int(index) = arg.kind {
+                        let type_info = elements[index as usize].clone();
                         Ir {
                             kind: ir::ExprKind::IndexTuple {
                                 tuple: callee_ar.into(),
                                 index: index as usize,
                             },
-                            ty: elements[index as usize],
+                            ty: type_info,
                         }
                     } else {
                         self.errors.push(SemanticError::UnexpectedExpr {
@@ -734,7 +716,7 @@ impl SemanticAnalyzer {
                 }
             }
             TypeInfo::Type(type_id) => self.handle_type_cast(span, &expr.args, type_id),
-            TypeInfo::Int => self.handle_type_cast(span, &expr.args, self.predefined_types.t_int),
+            TypeInfo::Int => self.handle_type_cast(span, &expr.args, &TypeInfo::Int),
             _ => {
                 self.errors.push(SemanticError::NotCallable {
                     callee: expr.callee.as_ref().clone(),
@@ -748,14 +730,14 @@ impl SemanticAnalyzer {
         let lhs = self.handle_expr(&expr.lhs);
         let rhs = self.handle_expr(&expr.rhs);
 
-        if lhs.ty == self.predefined_types.t_string {
+        if lhs.ty == TypeInfo::String {
             if expr.op == BinaryOp::Add {
                 if rhs.ty == lhs.ty {
                     let mut irs = vec![];
                     flatten_add_ir(lhs, &mut irs);
                     flatten_add_ir(rhs, &mut irs);
                     return Ir {
-                        ty: self.predefined_types.t_string,
+                        ty: TypeInfo::String,
                         kind: ir::ExprKind::Concat(irs),
                     };
                 } else {
@@ -776,10 +758,14 @@ impl SemanticAnalyzer {
         }
 
         let type_id = if lhs.ty == rhs.ty {
-            lhs.ty
+            lhs.ty.clone()
         } else {
-            self.emit_type_mismatch_error(span.clone(), lhs.ty, rhs.ty);
-            self.predefined_types.t_any
+            self.errors.push(SemanticError::TypeMismatch {
+                span: span.clone(),
+                expect: lhs.ty.clone(),
+                found: rhs.ty.clone(),
+            });
+            TypeInfo::Any
         };
 
         let kind = match expr.op {
@@ -797,14 +783,10 @@ impl SemanticAnalyzer {
         match expr.op {
             UnaryOp::Plus => ir,
             UnaryOp::Minus => {
-                let expected_types = vec![
-                    self.predefined_types.t_int,
-                    self.predefined_types.t_float,
-                    self.predefined_types.t_rational,
-                ];
+                let expected_types = vec![TypeInfo::Int, TypeInfo::Float, TypeInfo::Rational];
                 if expected_types.contains(&ir.ty) {
                     Ir {
-                        ty: ir.ty,
+                        ty: ir.ty.clone(),
                         kind: ir::ExprKind::Neg(ir.into()),
                     }
                 } else {
@@ -820,59 +802,55 @@ impl SemanticAnalyzer {
                 }
             }
             UnaryOp::Not => Ir {
-                ty: self.predefined_types.t_logic,
+                ty: TypeInfo::Logic,
                 kind: ir::ExprKind::Not(ir.into()),
             },
         }
     }
 
-    fn handle_type_expr(&mut self, expr: &TypeExpr) -> TypeId {
+    fn handle_type_expr(&mut self, expr: &TypeExpr) -> TypeInfo {
         let type_id = match &expr.kind {
-            TypeExprKind::Named(symbol) => (|| -> TypeId {
+            TypeExprKind::Named(symbol) => (|| -> TypeInfo {
                 if let Some(binding) = self.lookup(symbol) {
-                    let type_id = binding.type_id;
-                    if let Some(ty) = self.types.lookup(type_id) {
-                        if let TypeInfo::Type(inner_type) = ty {
-                            return *inner_type;
-                        } else {
-                            self.errors.push(SemanticError::UnexpectedExpr {
-                                span: expr.span.clone(),
-                                expect: "type".to_string(),
-                                found: "value".to_string(),
-                            });
-                            return self.predefined_types.t_any;
-                        }
+                    if let TypeInfo::Type(inner_type) = binding.type_info {
+                        return *inner_type;
+                    } else {
+                        self.errors.push(SemanticError::UnexpectedExpr {
+                            span: expr.span.clone(),
+                            expect: "type".to_string(),
+                            found: "value".to_string(),
+                        });
+                        return TypeInfo::Any;
                     }
                 }
                 self.errors.push(SemanticError::TypeNotFound {
                     span: expr.span.clone(),
                     symbol: *symbol,
                 });
-                self.predefined_types.t_any
+                TypeInfo::Any
             })(),
             TypeExprKind::Option(inner) => {
                 let inner = self.handle_type_expr(inner);
-                self.types.intern(TypeInfo::Option(inner))
+                TypeInfo::Option(inner.into())
             }
             TypeExprKind::Tuple(args) => {
                 let mut arg_ids = vec![];
                 for arg in args {
                     arg_ids.push(self.handle_type_expr(arg));
                 }
-                self.types.intern(TypeInfo::Tuple(arg_ids))
+                TypeInfo::Tuple(arg_ids)
             }
             TypeExprKind::Array(elem_type) => {
                 let elem_type_id = self.handle_type_expr(elem_type);
-                self.types.intern(TypeInfo::Array(elem_type_id))
+                TypeInfo::Array(elem_type_id.into())
             }
             TypeExprKind::Function { params, ret } => {
                 let param_types: Vec<_> = params.iter().map(|p| self.handle_type_expr(p)).collect();
                 let ret_ty = self.handle_type_expr(ret);
-                let inner_type = self.types.intern(TypeInfo::Function {
+                TypeInfo::Function {
                     params: param_types,
-                    ret: ret_ty,
-                });
-                self.types.intern(TypeInfo::Type(inner_type))
+                    ret: ret_ty.into(),
+                }
             }
             TypeExprKind::Type => {
                 panic!("{:?}", expr);
@@ -886,12 +864,12 @@ impl SemanticAnalyzer {
     fn handle_member_expr(&mut self, expr: &MemberExpr) -> Ir {
         let obj = self.handle_expr(&expr.object);
 
-        if obj.ty == self.predefined_types.t_string {
+        if obj.ty == TypeInfo::String {
             if let ExprKind::Id(id_expr) = &expr.property.kind {
                 if id_expr.symbol == self.builtin_symbols.s_Length {
                     return Ir {
                         kind: ir::ExprKind::GetLength(obj.into()),
-                        ty: self.predefined_types.t_int,
+                        ty: TypeInfo::Int,
                     };
                 }
             }
@@ -916,10 +894,9 @@ impl SemanticAnalyzer {
     fn handle_construct_option(&mut self, cons_expr: &ConstructExpr) -> Ir {
         if let Some(value) = cons_expr.args.first() {
             let value = self.handle_expr(value);
-            let ty = self.types.intern(TypeInfo::Option(value.ty));
             Ir {
+                ty: TypeInfo::Option(value.ty.clone().into()),
                 kind: ir::ExprKind::Option(Some(value.into())),
-                ty,
             }
         } else {
             self.placeholder_ir()
@@ -939,8 +916,8 @@ impl SemanticAnalyzer {
                 if ir.ty != prev.ty {
                     self.errors.push(SemanticError::TypeMismatch {
                         span: arg.span.clone(),
-                        expect: prev.ty,
-                        found: ir.ty,
+                        expect: prev.ty.clone(),
+                        found: ir.ty.clone(),
                     });
                     return self.placeholder_ir();
                 }
@@ -949,7 +926,7 @@ impl SemanticAnalyzer {
         }
 
         Ir {
-            ty: self.types.intern(TypeInfo::Array(irs.first().unwrap().ty)),
+            ty: TypeInfo::Array(irs.first().unwrap().ty.clone().into()),
             kind: ir::ExprKind::Array(irs),
         }
     }
@@ -968,8 +945,8 @@ fn flatten_add_ir(ir: Ir, out: &mut Vec<Ir>) {
 pub enum TypeError {
     InvalidUnaryOperand {
         op: UnaryOp,
-        operand: TypeId,
-        expected: Vec<TypeId>,
+        operand: TypeInfo,
+        expected: Vec<TypeInfo>,
     },
 }
 
@@ -981,8 +958,8 @@ pub enum SemanticError {
     #[error("{span:?} mismatched types")]
     TypeMismatch {
         span: Span,
-        expect: TypeId,
-        found: TypeId,
+        expect: TypeInfo,
+        found: TypeInfo,
     },
 
     #[error("{span:?} cannot resolve value {symbol:?}")]

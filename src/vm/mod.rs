@@ -10,6 +10,8 @@ use crate::{
     },
 };
 
+pub mod global_vars;
+
 #[derive(Debug, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Opcode {
@@ -81,6 +83,7 @@ pub struct FailureHandler {
 
 #[derive(Constructor, Clone)]
 pub struct Function {
+    pub type_id: TypeId,
     pub bytecode: Vec<u8>,
     pub failure_table: Vec<FailureHandler>,
     pub upvalues: Vec<UpvalueDesc>,
@@ -105,28 +108,12 @@ pub struct Vm<H: Heap = SimpleHeap> {
 }
 
 impl Vm {
-    pub fn new(
-        const_table: Vec<ConstValue>,
-        global_vars: Vec<Value>,
-        pre_types: PredefinedTypes,
-    ) -> Self {
-        let mut heap = SimpleHeap::default();
-        let stack = global_vars
-            .into_iter()
-            .map(|v| match v {
-                Value::Function { .. } => {
-                    let obj_id = heap.alloc_obj(v);
-                    Value::Ref(obj_id)
-                }
-                v => v,
-            })
-            .collect();
-
+    pub fn new(const_table: Vec<ConstValue>, pre_types: PredefinedTypes) -> Self {
         Self {
             op_stack: vec![],
-            stack,
+            stack: vec![],
             frames: vec![],
-            heap,
+            heap: SimpleHeap::default(),
             const_table,
             pre_types,
             functions: vec![],
@@ -545,7 +532,9 @@ impl Vm {
 
     fn exec_make_closure(&mut self) {
         let func_id = self.read_u32() as usize;
-        let upvalues = self.functions[func_id].upvalues.clone();
+        let func = &self.functions[func_id];
+        let func_type = func.type_id;
+        let upvalues = func.upvalues.clone();
 
         let upvalues = upvalues
             .into_iter()
@@ -559,6 +548,7 @@ impl Vm {
             .collect();
 
         let func_val = Value::Function {
+            type_id: func_type,
             kind: FnKind::Verse {
                 id: FunctionId(func_id),
                 upvalues,
@@ -573,7 +563,7 @@ impl Vm {
         let args = self.op_stack.split_off(self.op_stack.len() - argc as usize);
         let func = match self.op_stack.pop().unwrap() {
             Value::Ref(obj_id) => match self.heap.fetch_obj(obj_id) {
-                Value::Function { kind } => kind,
+                Value::Function { kind, .. } => kind,
                 _ => unreachable!(),
             },
             _ => unreachable!(),

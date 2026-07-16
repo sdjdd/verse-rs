@@ -16,12 +16,15 @@ pub enum TypeInfo {
     Char32,
     String,
 
-    Option(TypeId),
-    Tuple(Vec<TypeId>),
-    Array(TypeId),
-    Function { params: Vec<TypeId>, ret: TypeId },
+    Option(Box<TypeInfo>),
+    Tuple(Vec<TypeInfo>),
+    Array(Box<TypeInfo>),
+    Function {
+        params: Vec<TypeInfo>,
+        ret: Box<TypeInfo>,
+    },
 
-    Type(TypeId),
+    Type(Box<TypeInfo>),
 
     Bottom,
 }
