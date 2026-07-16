@@ -15,6 +15,7 @@ pub mod global_vars;
 #[derive(Debug, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Opcode {
+    PushVoid,
     PushInt,
     PushFloat,
     PushChar,
@@ -90,10 +91,9 @@ pub struct Function {
 }
 
 struct Frame {
+    func_id: usize,
     stack_base: usize,
-    bytecode: Vec<u8>,
     pc: usize,
-    failure_table: Vec<FailureHandler>,
     upvalues: Vec<ObjectId>,
 }
 
@@ -120,13 +120,11 @@ impl Vm {
         }
     }
 
-    pub fn run(&mut self, func_id: usize) -> Value {
-        let func = &self.functions[func_id];
+    pub fn run(&mut self, func_id: usize) {
         self.frames.push(Frame {
+            func_id,
             stack_base: 0,
-            bytecode: func.bytecode.clone(),
             pc: 0,
-            failure_table: func.failure_table.clone(),
             upvalues: vec![],
         });
 
@@ -136,12 +134,15 @@ impl Vm {
                 None => break,
             };
 
-            let op = match frame.bytecode.get(frame.pc) {
+            let func = &self.functions[frame.func_id];
+
+            let op = match func.bytecode.get(frame.pc) {
                 Some(byte) => {
                     frame.pc += 1;
                     Opcode::try_from(*byte).unwrap()
                 }
                 _ => {
+                    self.stack.truncate(frame.stack_base);
                     self.frames.pop();
                     continue;
                 }
@@ -153,7 +154,8 @@ impl Vm {
                 let mut failure_handled = false;
 
                 while let Some(frame) = self.frames.last_mut() {
-                    let handler = frame.failure_table.iter().find(|ft| {
+                    let func = &self.functions[frame.func_id];
+                    let handler = func.failure_table.iter().find(|ft| {
                         frame.pc >= ft.start_pc as usize && frame.pc < ft.end_pc as usize
                     });
                     if let Some(handler) = handler {
@@ -170,10 +172,8 @@ impl Vm {
                 }
             }
         }
-        self.op_stack
-            .pop()
-            .map(|v| self.deref(&v).clone())
-            .unwrap_or(Value::Void)
+
+        assert_eq!(self.op_stack.len(), 0);
     }
 
     fn get_stack_index(&self, offset: usize) -> usize {
@@ -182,7 +182,8 @@ impl Vm {
 
     fn read_byte(&mut self) -> u8 {
         let frame = self.frames.last_mut().unwrap();
-        let byte = frame.bytecode[frame.pc];
+        let func = &self.functions[frame.func_id];
+        let byte = func.bytecode[frame.pc];
         frame.pc += 1;
         byte
     }
@@ -224,6 +225,7 @@ impl Vm {
 
     fn dispatch(&mut self, op: Opcode) {
         match op {
+            Opcode::PushVoid => self.exec_push_void(),
             Opcode::PushInt => self.exec_push_int(),
             Opcode::PushFloat => self.exec_push_float(),
             Opcode::PushChar => self.exec_push_char(),
@@ -293,6 +295,10 @@ impl Vm {
             value = self.heap.fetch_obj(*id);
         }
         value
+    }
+
+    fn exec_push_void(&mut self) {
+        self.op_stack.push(Value::Void);
     }
 
     fn exec_push_int(&mut self) {
@@ -575,12 +581,10 @@ impl Vm {
         };
         match func {
             FnKind::Verse { id, upvalues } => {
-                let func = &self.functions[id.0];
                 let frame = Frame {
+                    func_id: id.0,
                     stack_base: self.stack.len(),
                     pc: 0,
-                    bytecode: func.bytecode.clone(),
-                    failure_table: func.failure_table.clone(),
                     upvalues: upvalues.clone(),
                 };
                 for arg in args {

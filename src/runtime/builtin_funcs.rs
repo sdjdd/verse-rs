@@ -16,7 +16,7 @@ pub fn write_value(
                 write!(w, "{}", str)
             }
         }
-        Value::Void => Ok(()),
+        Value::Void => write!(w, "[Void]"),
         Value::Logic(value) => write!(w, "logic{{{}}}", value),
         Value::False => write!(w, "false"),
         Value::Integer(value) => write!(w, "{}", value),

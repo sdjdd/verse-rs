@@ -46,8 +46,7 @@ fn main() {
             );
             let main = funcs.len() - 1;
             vm.functions = funcs;
-            let value = vm.run(main);
-            println!("{:?}", value);
+            vm.run(main);
         }
     }
 }

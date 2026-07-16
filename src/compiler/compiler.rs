@@ -45,6 +45,7 @@ impl Compiler {
     pub fn compile(&mut self, irs: Vec<Ir>) -> Vec<Function> {
         for ir in irs {
             self.compile_ir(ir);
+            self.append_op(Opcode::Pop);
         }
         let func = Function {
             type_id: self.intern_type(TypeInfo::Any),
@@ -334,7 +335,7 @@ impl Compiler {
     fn compile_function(&mut self, fn_ir: FunctionExpr, fn_type: TypeInfo) {
         let mut compiler = Compiler::new();
         compiler.start_fn_id = self.functions.len();
-        compiler.compile_ir(*fn_ir.body);
+        compiler.compile_function_body(*fn_ir.body, fn_ir.return_void);
         let func = Function {
             type_id: self.intern_type(fn_type),
             bytecode: compiler.bytecode,
@@ -349,6 +350,28 @@ impl Compiler {
         self.append_u32(fn_id as u32);
         self.append_op(Opcode::StoreLocal);
         self.append_u32(fn_ir.slot.0 as u32);
+    }
+
+    fn compile_function_body(&mut self, body: Ir, return_void: bool) {
+        if let ExprKind::Block(irs) = body.kind {
+            let len = irs.len();
+            for (i, ir) in irs.into_iter().enumerate() {
+                self.compile_ir(ir);
+                let is_last = i == len - 1;
+                if !is_last || return_void {
+                    self.append_op(Opcode::Pop);
+                }
+            }
+            if return_void {
+                self.append_op(Opcode::PushVoid);
+            }
+        } else {
+            self.compile_ir(body);
+            if return_void {
+                self.append_op(Opcode::Pop);
+                self.append_op(Opcode::PushVoid);
+            }
+        }
     }
 
     fn compile_call(&mut self, callee: Ir, args: Vec<Ir>) {
