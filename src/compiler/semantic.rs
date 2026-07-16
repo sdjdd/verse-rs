@@ -360,11 +360,10 @@ impl SemanticAnalyzer {
     }
 
     fn handle_set_expr(&mut self, expr: &SetExpr) -> Ir {
-        let value_ir = self.handle_expr(&expr.expr);
-        let value_type = value_ir.ty.clone();
+        let value_ir = self.handle_expr(&expr.rhs);
 
-        match &expr.target.kind {
-            LValueKind::Id(id_expr) => {
+        match &expr.lhs.kind {
+            ExprKind::Id(id_expr) => {
                 let var = match self.lookup(&id_expr.symbol) {
                     Some(var) => var,
                     None => {
@@ -372,16 +371,16 @@ impl SemanticAnalyzer {
                     }
                 };
 
-                if var.type_info != value_type {
+                if var.type_info != value_ir.ty {
                     self.errors.push(SemanticError::TypeMismatch {
-                        span: expr.expr.span.clone(),
+                        span: expr.rhs.span.clone(),
                         expect: var.type_info.clone(),
-                        found: value_type,
+                        found: value_ir.ty.clone(),
                     })
                 }
                 if !var.mutable {
                     self.errors.push(SemanticError::Mutability {
-                        span: expr.target.span.clone(),
+                        span: expr.lhs.span.clone(),
                         symbol: id_expr.symbol,
                     })
                 }
@@ -410,6 +409,13 @@ impl SemanticAnalyzer {
                         ty: var.type_info,
                     }
                 }
+            }
+            _ => {
+                self.errors.push(SemanticError::InvalidLeftHandSide {
+                    span: expr.lhs.span.clone(),
+                    expr: *expr.lhs.clone(),
+                });
+                self.placeholder_ir()
             }
         }
     }
@@ -916,7 +922,7 @@ impl SemanticAnalyzer {
             let ir = self.handle_expr(arg);
             if i > 0 {
                 let head = &irs[0];
-                if self.is_assignable_to(&ir.ty, &head.ty) {
+                if !self.is_assignable_to(&ir.ty, &head.ty) {
                     self.errors.push(SemanticError::TypeMismatch {
                         span: arg.span.clone(),
                         expect: head.ty.clone(),
@@ -991,4 +997,7 @@ pub enum SemanticError {
 
     #[error("cannot apply {:?}", op)]
     InvalidBinaryOp { span: Span, op: BinaryOp },
+
+    #[error("invalid left-side-hand of set")]
+    InvalidLeftHandSide { span: Span, expr: Expression },
 }

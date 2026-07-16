@@ -258,19 +258,17 @@ impl<'src> Parser<'src> {
         self.expect(Token::Set)?;
         let start = self.span().start;
 
-        let target_expr = self.parse_additive_expr()?;
-        let target: LValue =
-            target_expr
-                .try_into()
-                .map_err(|e: Expression| ParseError::SyntaxError {
-                    message: "Invalid set target".to_string(),
-                    span: e.span,
-                })?;
-
+        let lhs = self.parse_primary_expr()?;
         self.expect(Token::Eq)?;
-        let expr = self.parse_expression()?;
+        let rhs = self.parse_expression()?;
 
-        Ok(self.make_expr(start..expr.span.end, SetExpr::new(target, expr)))
+        Ok(Expression {
+            span: start..rhs.span.end,
+            kind: ExprKind::Set(SetExpr {
+                lhs: lhs.into(),
+                rhs: rhs.into(),
+            }),
+        })
     }
 
     fn parse_var_decl_expr(&mut self) -> ParseResult<Expression> {

@@ -62,31 +62,6 @@ pub struct IdExpr {
 }
 
 #[derive(Debug, Clone)]
-pub enum LValueKind {
-    Id(IdExpr),
-}
-
-#[derive(Debug, Clone)]
-pub struct LValue {
-    pub kind: LValueKind,
-    pub span: Span,
-}
-
-impl TryFrom<Expression> for LValue {
-    type Error = Expression;
-
-    fn try_from(value: Expression) -> Result<Self, Self::Error> {
-        match value.kind {
-            ExprKind::Id(id) => Ok(Self {
-                kind: LValueKind::Id(id),
-                span: value.span,
-            }),
-            _ => Err(value),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct DeclExpr {
     pub target: Symbol,
     pub typ: Option<TypeExpr>,
@@ -105,17 +80,8 @@ impl DeclExpr {
 
 #[derive(Debug, Clone)]
 pub struct SetExpr {
-    pub target: LValue,
-    pub expr: Box<Expression>,
-}
-
-impl SetExpr {
-    pub fn new(target: LValue, expr: Expression) -> Self {
-        Self {
-            target,
-            expr: expr.into(),
-        }
-    }
+    pub lhs: Box<Expression>,
+    pub rhs: Box<Expression>,
 }
 
 #[derive(Debug, Clone)]

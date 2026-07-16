@@ -39,6 +39,9 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolR
         SemanticError::TypeError { span, .. } => (span, format!("invalid unary operand")),
         SemanticError::BreakOutsideLoop { span } => (span, err.to_string()),
         SemanticError::InvalidBinaryOp { span, op } => (span, format!("cannot apply {:?}", op)),
+        SemanticError::InvalidLeftHandSide { span, .. } => {
+            (span, format!("invalid left-hand-side of set expression"))
+        }
     };
 
     let start_pos = get_source_position(src, span.start).unwrap();
