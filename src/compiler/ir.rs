@@ -94,10 +94,16 @@ pub enum UpvalueDesc {
     Upvalue(usize),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Effects {
+    pub decides: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct FunctionExpr {
     pub slot: Slot,
     pub params: Vec<Slot>,
+    pub effects: Effects,
     pub body: Box<Ir>,
     pub return_void: bool,
     pub upvalues: Vec<UpvalueDesc>,

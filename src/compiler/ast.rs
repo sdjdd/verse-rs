@@ -1,11 +1,13 @@
 use derive_more::{Constructor, From};
+use derive_new::new;
 
 use super::lexer::Span;
 use crate::core::{ConstId, Symbol};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct Expression {
     pub span: Span,
+    #[new(into)]
     pub kind: ExprKind,
 }
 
@@ -58,7 +60,17 @@ pub struct TypeExpr {
 
 #[derive(Debug, Clone, Constructor)]
 pub struct IdExpr {
+    pub span: Span,
     pub symbol: Symbol,
+}
+
+impl Into<Expression> for IdExpr {
+    fn into(self) -> Expression {
+        Expression {
+            span: self.span.clone(),
+            kind: ExprKind::Id(self),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,15 +107,7 @@ pub struct VarDeclExpr {
 pub struct CallExpr {
     pub callee: Box<Expression>,
     pub args: Vec<Expression>,
-}
-
-impl CallExpr {
-    pub fn new(callee: Expression, args: Vec<Expression>) -> Self {
-        Self {
-            callee: callee.into(),
-            args,
-        }
-    }
+    pub handle_failure: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,34 +202,20 @@ pub struct BlockExpr {
     pub body: Vec<Expression>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Constructor)]
 pub struct FunctionParam {
     pub name: Symbol,
     pub typ: TypeExpr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct FunctionExpr {
     pub name: Symbol,
     pub params: Vec<FunctionParam>,
+    pub effects: Vec<IdExpr>,
     pub return_type: TypeExpr,
+    #[new(into)]
     pub body: Box<Expression>,
-}
-
-impl FunctionExpr {
-    pub fn new(
-        name: Symbol,
-        params: Vec<FunctionParam>,
-        return_type: TypeExpr,
-        body: Expression,
-    ) -> Self {
-        Self {
-            name,
-            params,
-            return_type,
-            body: body.into(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,7 +224,7 @@ pub struct MemberExpr {
     pub property: Box<Expression>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Constructor)]
 pub struct ConstructExpr {
     pub callee: Box<Expression>,
     pub args: Vec<Expression>,

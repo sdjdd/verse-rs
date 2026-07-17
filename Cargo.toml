@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+derive-new = "0.7.0"
 derive_more = { version = "2.1.1", features = ["constructor", "from"] }
 logos = "0.16.1"
 num_enum = "0.7.6"

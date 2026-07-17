@@ -2,13 +2,14 @@ use ordermap::OrderSet;
 use std::collections::HashMap;
 use thiserror::Error;
 
-use super::ast::*;
-use super::ir::{self, Ir, Slot, UpvalueDesc};
-use super::lexer::Span;
 use crate::core::{
     PredefinedSymbols, Symbol, SymbolRegistry,
     types::{TypeInfo, TypeRegistry},
 };
+
+use super::ast::*;
+use super::ir::{self, Effects, Ir, Slot, UpvalueDesc};
+use super::lexer::Span;
 
 #[derive(Debug, Clone)]
 pub struct Variable {
@@ -62,7 +63,7 @@ impl Scope {
         slot
     }
 
-    pub fn lookup(&self, symbol: Symbol) -> Option<&Variable> {
+    fn lookup(&self, symbol: Symbol) -> Option<&Variable> {
         self.variables.get(&symbol)
     }
 }
@@ -149,7 +150,7 @@ impl SemanticAnalyzer {
         for (index, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(var) = scope.lookup(*symbol) {
                 let res = LookupResult {
-                    is_global: index == 0 && self.scopes.len() > 1,
+                    is_global: index == 0,
                     is_upvalue: captured,
                     slot: var.slot,
                     type_info: var.type_info.clone(),
@@ -568,6 +569,18 @@ impl SemanticAnalyzer {
             .map(|p| self.handle_type_expr(&p.typ))
             .collect();
 
+        let mut effects = Effects { decides: false };
+        for effect in expr.effects.iter() {
+            match effect.symbol {
+                e if e == self.builtin_symbols.s_decides => {
+                    effects.decides = true;
+                }
+                _ => self.errors.push(SemanticError::InvalidEffect {
+                    span: effect.span.clone(),
+                }),
+            }
+        }
+
         self.push_scope(true);
 
         let mut param_slots = vec![];
@@ -605,6 +618,7 @@ impl SemanticAnalyzer {
             kind: ir::ExprKind::Func(ir::FunctionExpr {
                 slot: func_slot,
                 params: param_slots,
+                effects,
                 body: body.into(),
                 return_void,
                 upvalues,
@@ -969,4 +983,7 @@ pub enum SemanticError {
 
     #[error("invalid left-side-hand of set")]
     InvalidLeftHandSide { span: Span, expr: Expression },
+
+    #[error("invalid function effect")]
+    InvalidEffect { span: Span },
 }
