@@ -420,9 +420,7 @@ impl SemanticAnalyzer {
             };
             Some(ir)
         } else {
-            self.errors.push(SemanticError::UndefinedName {
-                span,
-            });
+            self.errors.push(SemanticError::UndefinedName { span });
             None
         }
     }
@@ -725,14 +723,23 @@ impl SemanticAnalyzer {
                 if let Some(arg) = expr.args.first() {
                     let arg = self.handle_expr(arg)?;
                     if let ir::ExprKind::Int(index) = arg.kind {
-                        let type_info = elements[index as usize].clone();
-                        Some(Ir {
-                            kind: ir::ExprKind::IndexTuple {
-                                tuple: callee_ar.into(),
-                                index: index as usize,
-                            },
-                            ty: type_info,
-                        })
+                        if index < 0 || index as usize >= elements.len() {
+                            self.errors.push(SemanticError::TupleIndexOutOfBounds {
+                                span: expr.args[0].span.clone(),
+                                index,
+                                length: elements.len(),
+                            });
+                            None
+                        } else {
+                            let type_info = elements[index as usize].clone();
+                            Some(Ir {
+                                kind: ir::ExprKind::IndexTuple {
+                                    tuple: callee_ar.into(),
+                                    index: index as usize,
+                                },
+                                ty: type_info,
+                            })
+                        }
                     } else {
                         self.errors.push(SemanticError::InvalidTupleIndex {
                             span: expr.args[0].span.clone(),
@@ -966,7 +973,9 @@ fn flatten_add_ir(ir: Ir, out: &mut Vec<Ir>) {
 
 #[derive(Debug)]
 pub enum SemanticError {
-    UndefinedName { span: Span },
+    UndefinedName {
+        span: Span,
+    },
 
     TypeMismatch {
         span: Span,
@@ -988,11 +997,19 @@ pub enum SemanticError {
         rhs: TypeInfo,
     },
 
-    ImmutableAssignment { span: Span, symbol: Symbol },
+    ImmutableAssignment {
+        span: Span,
+        symbol: Symbol,
+    },
 
-    InvalidAssignmentTarget { span: Span },
+    InvalidAssignmentTarget {
+        span: Span,
+    },
 
-    NotCallable { span: Span, ty: TypeInfo },
+    NotCallable {
+        span: Span,
+        ty: TypeInfo,
+    },
 
     ArgCountMismatch {
         span: Span,
@@ -1000,15 +1017,33 @@ pub enum SemanticError {
         found: usize,
     },
 
-    InvalidTupleIndex { span: Span },
+    InvalidTupleIndex {
+        span: Span,
+    },
 
-    ExpectedTypeGotValue { span: Span },
+    TupleIndexOutOfBounds {
+        span: Span,
+        index: i64,
+        length: usize,
+    },
 
-    BreakOutsideLoop { span: Span },
+    ExpectedTypeGotValue {
+        span: Span,
+    },
 
-    InvalidEffect { span: Span },
+    BreakOutsideLoop {
+        span: Span,
+    },
 
-    UnexpectedFallibleExpr { span: Span },
+    InvalidEffect {
+        span: Span,
+    },
 
-    ExpectedFallibleExpr { span: Span },
+    UnexpectedFallibleExpr {
+        span: Span,
+    },
+
+    ExpectedFallibleExpr {
+        span: Span,
+    },
 }

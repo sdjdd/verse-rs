@@ -44,7 +44,10 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolR
         }
         SemanticError::InvalidBinaryOp { span, op, lhs, rhs } => (
             span,
-            format!("cannot apply `{}` to types `{lhs}` and `{rhs}`", fmt_binary_op(op)),
+            format!(
+                "cannot apply `{}` to types `{lhs}` and `{rhs}`",
+                fmt_binary_op(op)
+            ),
         ),
         SemanticError::ImmutableAssignment { span, symbol } => (
             span,
@@ -67,9 +70,18 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolR
             span,
             format!("expected {expected} argument(s), found {found}"),
         ),
-        SemanticError::InvalidTupleIndex { span } => {
-            (span, "tuple index must be an integer literal".into())
-        }
+        SemanticError::InvalidTupleIndex { span } => (
+            span,
+            "tuple index must be a non-negative integer literal".into(),
+        ),
+        SemanticError::TupleIndexOutOfBounds {
+            span,
+            index,
+            length,
+        } => (
+            span,
+            format!("tuple index {index} out of bounds for tuple of length {length}"),
+        ),
         SemanticError::ExpectedTypeGotValue { span } => {
             (span, "expected a type, found a value".into())
         }
@@ -94,9 +106,7 @@ pub fn print_parser_error(err: &ParseError, src: &str) {
         ParseError::UnexpectedToken { token, span } => {
             (span, format!("unexpected token `{token:?}`"))
         }
-        ParseError::InvalidToken { token, span } => {
-            (span, format!("invalid token `{token:?}`"))
-        }
+        ParseError::InvalidToken { token, span } => (span, format!("invalid token `{token:?}`")),
         ParseError::LexerError { inner, .. } => match inner {
             LexerError::InvalidToken(span) => {
                 (span, format!("invalid token `{}`", &src[span.clone()]))
@@ -123,12 +133,19 @@ fn print_diagnostic(src: &str, span: &std::ops::Range<usize>, message: &str) {
     eprintln!("{line_no:>gutter_width$} | {display_line}");
 
     let start_in_line = span.start.saturating_sub(line_start_offset);
-    let end_in_line = span.end.saturating_sub(line_start_offset).max(start_in_line + 1);
+    let end_in_line = span
+        .end
+        .saturating_sub(line_start_offset)
+        .max(start_in_line + 1);
     let underline_len = (end_in_line - start_in_line)
         .min(display_line.len().saturating_sub(start_in_line))
         .max(1);
     let padding = " ".repeat(start_in_line);
-    eprintln!("{:>gutter_width$} | {padding}{}", "", "^".repeat(underline_len));
+    eprintln!(
+        "{:>gutter_width$} | {padding}{}",
+        "",
+        "^".repeat(underline_len)
+    );
 }
 
 fn fmt_unary_op(op: &UnaryOp) -> &'static str {
@@ -176,8 +193,6 @@ fn offset_to_line_col(src: &str, offset: usize) -> Option<(usize, usize)> {
 
 fn get_source_line(src: &str, offset: usize) -> (&str, usize) {
     let line_start = src[..offset].rfind('\n').map_or(0, |p| p + 1);
-    let line_end = src[offset..]
-        .find('\n')
-        .map_or(src.len(), |p| offset + p);
+    let line_end = src[offset..].find('\n').map_or(src.len(), |p| offset + p);
     (&src[line_start..line_end], line_start)
 }
