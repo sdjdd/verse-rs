@@ -359,7 +359,6 @@ impl SemanticAnalyzer {
                 if !var.mutable {
                     self.errors.push(SemanticError::ImmutableAssignment {
                         span: expr.lhs.span.clone(),
-                        symbol: id_expr.symbol,
                     })
                 }
 
@@ -999,7 +998,6 @@ pub enum SemanticError {
 
     ImmutableAssignment {
         span: Span,
-        symbol: Symbol,
     },
 
     InvalidAssignmentTarget {

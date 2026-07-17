@@ -31,7 +31,7 @@ fn main() {
 
         let root_irs = analyzer.analyze(&program.expressions);
         for err in &analyzer.errors {
-            report_semantic_error(&err, &source, &parser.symbol_table);
+            report_semantic_error(&err, &source);
         }
         if analyzer.errors.is_empty() {
             let mut compiler = Compiler::new();

@@ -1,14 +1,11 @@
-use crate::{
-    compiler::{
-        ast::{BinaryOp, UnaryOp},
-        lexer::LexerError,
-        parser::ParseError,
-        semantic::SemanticError,
-    },
-    core::SymbolRegistry,
+use crate::compiler::{
+    ast::{BinaryOp, UnaryOp},
+    lexer::LexerError,
+    parser::ParseError,
+    semantic::SemanticError,
 };
 
-pub fn report_semantic_error(err: &SemanticError, src: &str, symbol_table: &SymbolRegistry) {
+pub fn report_semantic_error(err: &SemanticError, src: &str) {
     let (span, message) = match err {
         SemanticError::UndefinedName { span } => (
             span,
@@ -49,11 +46,11 @@ pub fn report_semantic_error(err: &SemanticError, src: &str, symbol_table: &Symb
                 fmt_binary_op(op)
             ),
         ),
-        SemanticError::ImmutableAssignment { span, symbol } => (
+        SemanticError::ImmutableAssignment { span } => (
             span,
             format!(
                 "cannot assign to immutable variable `{}`",
-                symbol_table.lookup(*symbol)
+                &src[span.clone()]
             ),
         ),
         SemanticError::InvalidAssignmentTarget { span } => {
