@@ -349,7 +349,7 @@ impl SemanticAnalyzer {
                     }
                 };
 
-                if var.type_info != value.ty {
+                if !self.is_assignable_to(&value.ty, &var.type_info) {
                     self.errors.push(SemanticError::TypeMismatch {
                         span: expr.rhs.span.clone(),
                         expected: var.type_info.clone(),
@@ -804,6 +804,17 @@ impl SemanticAnalyzer {
             TypeInfo::Any
         };
 
+        let numeric_types = [TypeInfo::Int, TypeInfo::Float, TypeInfo::Rational];
+        if !numeric_types.contains(&type_id) {
+            self.errors.push(SemanticError::InvalidBinaryOp {
+                span: expr.op_span.clone(),
+                op: expr.op,
+                lhs: lhs.ty,
+                rhs: rhs.ty,
+            });
+            return None;
+        }
+
         let kind = match expr.op {
             BinaryOp::Add => IrKind::Add((lhs.into(), rhs.into())),
             BinaryOp::Sub => IrKind::Sub((lhs.into(), rhs.into())),
@@ -817,14 +828,15 @@ impl SemanticAnalyzer {
     fn lower_unary_expr(&mut self, expr: &UnaryExpr) -> Option<Ir> {
         let ir = self.lower_expr(&expr.expr)?;
         match expr.op {
-            UnaryOp::Plus => Some(ir),
-            UnaryOp::Minus => {
+            UnaryOp::Plus | UnaryOp::Minus => {
                 let expected_types = vec![TypeInfo::Int, TypeInfo::Float, TypeInfo::Rational];
                 if expected_types.contains(&ir.ty) {
-                    Some(Ir {
-                        ty: ir.ty.clone(),
-                        kind: IrKind::Neg(ir.into()),
-                    })
+                    let ty = ir.ty.clone();
+                    let kind = match expr.op {
+                        UnaryOp::Minus => IrKind::Neg(ir.into()),
+                        _ => ir.kind,
+                    };
+                    Some(Ir { ty, kind })
                 } else {
                     self.errors.push(SemanticError::InvalidUnaryOp {
                         span: expr.expr.span.clone(),
@@ -835,10 +847,22 @@ impl SemanticAnalyzer {
                     None
                 }
             }
-            UnaryOp::Not => Some(Ir {
-                ty: TypeInfo::Logic,
-                kind: IrKind::Not(ir.into()),
-            }),
+            UnaryOp::Not => {
+                if ir.ty == TypeInfo::Logic {
+                    Some(Ir {
+                        ty: TypeInfo::Logic,
+                        kind: IrKind::Not(ir.into()),
+                    })
+                } else {
+                    self.errors.push(SemanticError::InvalidUnaryOp {
+                        span: expr.expr.span.clone(),
+                        op: expr.op,
+                        operand: ir.ty,
+                        expected: vec![TypeInfo::Logic],
+                    });
+                    None
+                }
+            }
         }
     }
 
