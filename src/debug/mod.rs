@@ -42,7 +42,9 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolR
         SemanticError::InvalidLeftHandSide { span, .. } => {
             (span, format!("invalid left-hand-side of set expression"))
         }
-        SemanticError::InvalidEffect { span } => (span, format!("invalid function effect")),
+        SemanticError::InvalidEffect { span } => (span, err.to_string()),
+        SemanticError::FallibleExprNotAllowed { span } => (span, err.to_string()),
+        SemanticError::FallibleExprOnly { span } => (span, err.to_string()),
     };
 
     let start_pos = get_source_position(src, span.start).unwrap();

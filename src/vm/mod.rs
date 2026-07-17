@@ -105,6 +105,8 @@ pub struct Vm<H: Heap = SimpleHeap> {
     const_table: Vec<ConstValue>,
     pre_types: PredefinedTypes,
     pub functions: Vec<Function>,
+
+    pending_failure: Option<()>,
 }
 
 impl Vm {
@@ -117,6 +119,7 @@ impl Vm {
             const_table,
             pre_types,
             functions: vec![],
+            pending_failure: None,
         }
     }
 
@@ -150,16 +153,14 @@ impl Vm {
 
             self.dispatch(op);
 
-            if let Some(Value::False) = self.op_stack.last() {
-                let mut failure_handled = false;
-
+            if self.pending_failure.is_some() {
                 while let Some(frame) = self.frames.last_mut() {
                     let func = &self.functions[frame.func_id];
                     let handler = func.failure_table.iter().find(|ft| {
                         frame.pc >= ft.start_pc as usize && frame.pc < ft.end_pc as usize
                     });
                     if let Some(handler) = handler {
-                        failure_handled = true;
+                        self.pending_failure.take();
                         frame.pc = handler.handler_pc as usize;
                         self.op_stack.truncate(handler.op_stack_size as usize);
                         break;
@@ -167,13 +168,14 @@ impl Vm {
                     self.frames.pop();
                 }
 
-                if !failure_handled {
+                if self.pending_failure.is_some() {
+                    self.op_stack.clear();
                     break;
                 }
             }
         }
 
-        assert_eq!(self.op_stack.len(), 0);
+        assert_eq!(self.op_stack.pop(), None);
     }
 
     fn get_stack_index(&self, offset: usize) -> usize {
@@ -451,7 +453,7 @@ impl Vm {
         let rhs = self.op_stack.pop().unwrap();
         let lhs = self.op_stack.pop().unwrap();
         if rhs.is_zero() {
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
             return;
         }
         self.op_stack.push(lhs / rhs);
@@ -482,7 +484,7 @@ impl Vm {
         if lhs == rhs {
             self.op_stack.push(rhs);
         } else {
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
         }
     }
 
@@ -492,7 +494,7 @@ impl Vm {
         if lhs != rhs {
             self.op_stack.push(rhs);
         } else {
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
         }
     }
 
@@ -502,7 +504,7 @@ impl Vm {
         if lhs > rhs {
             self.op_stack.push(rhs);
         } else {
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
         }
     }
 
@@ -512,7 +514,7 @@ impl Vm {
         if lhs >= rhs {
             self.op_stack.push(rhs);
         } else {
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
         }
     }
 
@@ -522,7 +524,7 @@ impl Vm {
         if lhs < rhs {
             self.op_stack.push(rhs);
         } else {
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
         }
     }
 
@@ -532,7 +534,7 @@ impl Vm {
         if lhs <= rhs {
             self.op_stack.push(rhs);
         } else {
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
         }
     }
 
@@ -600,7 +602,11 @@ impl Vm {
                 };
                 native_fn(&mut ctx);
                 if let Some(ret_val) = ctx.ret_val {
-                    self.op_stack.push(ret_val.unwrap_or(Value::False));
+                    if let Ok(ret_val) = ret_val {
+                        self.op_stack.push(ret_val);
+                    } else {
+                        self.pending_failure = Some(());
+                    }
                 } else {
                     self.op_stack.push(Value::Void);
                 }
@@ -654,8 +660,7 @@ impl Vm {
             Value::Ref(_) => unreachable!(),
         };
         if !ok {
-            self.op_stack.pop();
-            self.op_stack.push(Value::False);
+            self.pending_failure = Some(());
         }
     }
 

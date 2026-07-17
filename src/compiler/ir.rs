@@ -50,6 +50,59 @@ pub enum ExprKind {
     Concat(Vec<Ir>),
 }
 
+impl ExprKind {
+    pub fn is_fallible(&self) -> bool {
+        match self {
+            ExprKind::Cast { .. } | ExprKind::Div(_) | ExprKind::CompareChain(_) => true,
+
+            ExprKind::LoadLocal { .. }
+            | ExprKind::LoadGlobal { .. }
+            | ExprKind::LoadUpvalue { .. }
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Char(_)
+            | ExprKind::Char32(_)
+            | ExprKind::String(_)
+            | ExprKind::Logic(_)
+            | ExprKind::Break
+            | ExprKind::Type(_) => false,
+
+            ExprKind::StoreGlobal { value: ir, .. }
+            | ExprKind::StoreLocal { value: ir, .. }
+            | ExprKind::StoreUpvalue { value: ir, .. }
+            | ExprKind::Neg(ir)
+            | ExprKind::Not(ir)
+            | ExprKind::IndexTuple { tuple: ir, .. }
+            | ExprKind::Loop(ir)
+            | ExprKind::GetLength(ir) => ir.kind.is_fallible(),
+
+            ExprKind::Add((a, b)) | ExprKind::Sub((a, b)) | ExprKind::Mul((a, b)) => {
+                a.kind.is_fallible() || b.kind.is_fallible()
+            }
+
+            ExprKind::Tuple(irs)
+            | ExprKind::Array(irs)
+            | ExprKind::Block(irs)
+            | ExprKind::Concat(irs) => irs.iter().any(|ir| ir.kind.is_fallible()),
+
+            ExprKind::Option(v) => v.as_ref().is_some_and(|ir| ir.kind.is_fallible()),
+            ExprKind::If(e) => {
+                e.test.kind.is_fallible()
+                    || e.then.kind.is_fallible()
+                    || e.alt.as_ref().is_some_and(|e| e.kind.is_fallible())
+            }
+
+            ExprKind::Func(func) => func.effects.decides,
+            ExprKind::Call(e) => e.callee.kind.is_fallible(),
+
+            ExprKind::Template(elems) => elems.iter().any(|e| match e {
+                TemplateElement::Expr(ir) => ir.kind.is_fallible(),
+                _ => false,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StoreLocalIr {
     pub slot: Slot,

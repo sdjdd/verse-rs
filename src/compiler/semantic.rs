@@ -78,6 +78,7 @@ pub struct SemanticAnalyzer {
     pub types: TypeRegistry,
 
     loop_stack: Vec<LoopInfo>,
+    failure_contexts: u32,
 }
 
 impl SemanticAnalyzer {
@@ -119,6 +120,7 @@ impl SemanticAnalyzer {
             errors: vec![],
             types: TypeRegistry::default(),
             loop_stack: vec![],
+            failure_contexts: 0,
         }
     }
 
@@ -200,6 +202,21 @@ impl SemanticAnalyzer {
         self.loop_stack.pop();
     }
 
+    fn failure_ctx_push(&mut self) {
+        self.failure_contexts += 1;
+    }
+
+    fn failure_ctx_pop(&mut self) {
+        self.failure_contexts -= 1;
+    }
+
+    fn check_fallible_expr_allowing(&mut self, span: Span) {
+        if self.failure_contexts == 0 {
+            self.errors
+                .push(SemanticError::FallibleExprNotAllowed { span })
+        }
+    }
+
     pub fn analyze(&mut self, program: &[Expression]) -> Vec<Ir> {
         let mut root_irs = vec![];
         for expr in program {
@@ -240,7 +257,7 @@ impl SemanticAnalyzer {
             ExprKind::Set(e) => self.handle_set_expr(e),
             ExprKind::Id(e) => self.handle_id_expr(expr.span.clone(), e),
             ExprKind::Block(e) => self.handle_block_expr(e),
-            ExprKind::CompareChain(e) => self.handle_compare_chain_expr(e),
+            ExprKind::CompareChain(e) => self.handle_compare_chain_expr(expr.span.clone(), e),
             ExprKind::Template(e) => self.handle_template_expr(e),
             ExprKind::Tuple(e) => self.handle_tuple_expr(e),
             ExprKind::If(e) => self.handle_if_expr(e),
@@ -434,9 +451,11 @@ impl SemanticAnalyzer {
         })
     }
 
-    fn handle_compare_chain_expr(&mut self, expr: &CompareChainExpr) -> Option<Ir> {
+    fn handle_compare_chain_expr(&mut self, span: Span, expr: &CompareChainExpr) -> Option<Ir> {
         // TODO: check if items are comparable
         // Currently just check if they are the same type
+
+        self.check_fallible_expr_allowing(span.clone());
 
         let head_ir = self.handle_expr(&expr.head)?;
 
@@ -503,11 +522,20 @@ impl SemanticAnalyzer {
 
     fn handle_if_expr(&mut self, expr: &IfExpr) -> Option<Ir> {
         self.push_scope(false);
+        self.failure_ctx_push();
         let test_ir = self.handle_expr(&expr.test);
+        self.failure_ctx_pop();
         let then_ir = self.handle_expr(&expr.consequent);
         self.pop_scope();
 
         let test_ir = test_ir?;
+
+        if !test_ir.kind.is_fallible() {
+            self.errors.push(SemanticError::FallibleExprOnly {
+                span: expr.test.span.clone(),
+            })
+        }
+
         let then_ir = then_ir?;
 
         let (expr_type, alt_ir) = if let Some(alt) = &expr.alternate {
@@ -633,6 +661,8 @@ impl SemanticAnalyzer {
         args: &[Expression],
         type_info: &TypeInfo,
     ) -> Option<Ir> {
+        self.check_fallible_expr_allowing(span.clone());
+
         if args.len() != 1 {
             self.errors.push(SemanticError::ArgsCountMismatch { span });
         }
@@ -986,4 +1016,10 @@ pub enum SemanticError {
 
     #[error("invalid function effect")]
     InvalidEffect { span: Span },
+
+    #[error("fallible expression not allowed here")]
+    FallibleExprNotAllowed { span: Span },
+
+    #[error("no fallible expression not allowed here")]
+    FallibleExprOnly { span: Span },
 }

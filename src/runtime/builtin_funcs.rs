@@ -46,7 +46,15 @@ pub fn write_value(
         }
         Value::Function { .. } => write!(w, "[Function]"),
         Value::Type { .. } => write!(w, "[Type]"),
-        Value::Option { .. } => write!(w, "[Option]"),
+        Value::Option { value, .. } => {
+            if let Some(value) = value {
+                write!(w, "option{{")?;
+                write_value(w, heap, value, quate_string)?;
+                write!(w, "}}")
+            } else {
+                write!(w, "option{{}}")
+            }
+        }
         Value::Ref(id) => {
             let value = loop {
                 let value = heap.fetch_obj(*id);
