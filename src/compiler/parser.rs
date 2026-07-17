@@ -564,9 +564,24 @@ impl<'src> Parser<'src> {
                 }
                 break;
             }
-            self.expect(end)?;
+            if self.peek() != end {
+                self.synchronize_to(end);
+                return Err(ParseError::UnexpectedToken {
+                    token: self.peek(),
+                    span: self.span(),
+                });
+            }
+            self.next();
         }
         Ok(list)
+    }
+
+    fn synchronize_to(&mut self, end: Token) {
+        while !matches!(self.peek(), Token::Newline | Token::EOF)
+            && self.peek() != end
+        {
+            self.next();
+        }
     }
 
     fn parse_call_expr(&mut self) -> ParseResult<Expression> {
