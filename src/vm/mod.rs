@@ -103,23 +103,23 @@ pub struct Vm<H: Heap = SimpleHeap> {
     frames: Vec<Frame>,
     heap: H,
     const_table: Vec<ConstValue>,
-    pre_types: PredefinedTypes,
+    predefined_types: PredefinedTypes,
     pub functions: Vec<Function>,
 
-    pending_failure: Option<()>,
+    has_pending_failure: bool,
 }
 
 impl Vm {
-    pub fn new(const_table: Vec<ConstValue>, pre_types: PredefinedTypes) -> Self {
+    pub fn new(const_table: Vec<ConstValue>, predefined_types: PredefinedTypes) -> Self {
         Self {
             op_stack: vec![],
             stack: vec![],
             frames: vec![],
             heap: SimpleHeap::default(),
             const_table,
-            pre_types,
+            predefined_types,
             functions: vec![],
-            pending_failure: None,
+            has_pending_failure: false,
         }
     }
 
@@ -153,14 +153,14 @@ impl Vm {
 
             self.dispatch(op);
 
-            if self.pending_failure.is_some() {
+            if self.has_pending_failure {
                 while let Some(frame) = self.frames.last_mut() {
                     let func = &self.functions[frame.func_id];
                     let handler = func.failure_table.iter().find(|ft| {
                         frame.pc >= ft.start_pc as usize && frame.pc < ft.end_pc as usize
                     });
                     if let Some(handler) = handler {
-                        self.pending_failure.take();
+                        self.has_pending_failure = false;
                         frame.pc = handler.handler_pc as usize;
                         self.op_stack.truncate(handler.op_stack_size as usize);
                         break;
@@ -168,7 +168,7 @@ impl Vm {
                     self.frames.pop();
                 }
 
-                if self.pending_failure.is_some() {
+                if self.has_pending_failure {
                     self.op_stack.clear();
                     break;
                 }
@@ -265,7 +265,7 @@ impl Vm {
             Opcode::Jmp => self.exec_jmp(),
             Opcode::Call => self.exec_call(),
             Opcode::ToString => self.exec_to_string(),
-            Opcode::Concat => self.exec_concat_str(),
+            Opcode::Concat => self.exec_concat(),
             Opcode::Cast => self.exec_cast(),
             Opcode::Len => self.exec_len(),
         }
@@ -281,7 +281,7 @@ impl Vm {
         }
     }
 
-    fn promote_local(&mut self, offset: usize) -> ObjectId {
+    fn box_local(&mut self, offset: usize) -> ObjectId {
         let index = self.get_stack_index(offset);
         if let Value::Ref(obj_id) = &self.stack[index] {
             return *obj_id;
@@ -292,7 +292,7 @@ impl Vm {
         obj_id
     }
 
-    fn deref<'a>(&'a self, mut value: &'a Value) -> &'a Value {
+    fn resolve_ref<'a>(&'a self, mut value: &'a Value) -> &'a Value {
         while let Value::Ref(id) = value {
             value = self.heap.fetch_obj(*id);
         }
@@ -453,7 +453,7 @@ impl Vm {
         let rhs = self.op_stack.pop().unwrap();
         let lhs = self.op_stack.pop().unwrap();
         if rhs.is_zero() {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
             return;
         }
         self.op_stack.push(lhs / rhs);
@@ -484,7 +484,7 @@ impl Vm {
         if lhs == rhs {
             self.op_stack.push(rhs);
         } else {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
         }
     }
 
@@ -494,7 +494,7 @@ impl Vm {
         if lhs != rhs {
             self.op_stack.push(rhs);
         } else {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
         }
     }
 
@@ -504,7 +504,7 @@ impl Vm {
         if lhs > rhs {
             self.op_stack.push(rhs);
         } else {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
         }
     }
 
@@ -514,7 +514,7 @@ impl Vm {
         if lhs >= rhs {
             self.op_stack.push(rhs);
         } else {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
         }
     }
 
@@ -524,7 +524,7 @@ impl Vm {
         if lhs < rhs {
             self.op_stack.push(rhs);
         } else {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
         }
     }
 
@@ -534,7 +534,7 @@ impl Vm {
         if lhs <= rhs {
             self.op_stack.push(rhs);
         } else {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
         }
     }
 
@@ -552,7 +552,7 @@ impl Vm {
         let upvalues = upvalues
             .into_iter()
             .map(|upvalue| match upvalue {
-                UpvalueDesc::Local(slot) => self.promote_local(slot.0),
+                UpvalueDesc::Local(slot) => self.box_local(slot.0),
                 UpvalueDesc::Upvalue(index) => {
                     let parent_frame = self.frames.iter().rev().next().unwrap();
                     parent_frame.upvalues[index]
@@ -605,7 +605,7 @@ impl Vm {
                     if let Ok(ret_val) = ret_val {
                         self.op_stack.push(ret_val);
                     } else {
-                        self.pending_failure = Some(());
+                        self.has_pending_failure = true;
                     }
                 } else {
                     self.op_stack.push(Value::Void);
@@ -623,12 +623,12 @@ impl Vm {
         self.op_stack.push(value);
     }
 
-    fn exec_concat_str(&mut self) {
+    fn exec_concat(&mut self) {
         let count = self.read_u32() as usize;
         let values = self.op_stack.split_off(self.op_stack.len() - count);
         let mut buf = String::new();
         for value in values {
-            let value = self.deref(&value);
+            let value = self.resolve_ref(&value);
             match value {
                 Value::String(s) => buf.push_str(s),
                 _ => panic!("not string"),
@@ -641,17 +641,17 @@ impl Vm {
     fn exec_cast(&mut self) {
         let expect = TypeId(self.read_u32());
         let value = self.op_stack.last().unwrap();
-        let value = self.deref(value);
+        let value = self.resolve_ref(value);
         let ok = match value {
-            Value::Void => expect == self.pre_types.t_void,
-            Value::Integer(_) => expect == self.pre_types.t_int,
-            Value::Rational(..) => expect == self.pre_types.t_rational,
-            Value::Float(_) => expect == self.pre_types.t_float,
-            Value::Char(_) => expect == self.pre_types.t_char,
-            Value::Char32(_) => expect == self.pre_types.t_char32,
-            Value::String(_) => expect == self.pre_types.t_string,
-            Value::False => expect == self.pre_types.t_false,
-            Value::Logic(_) => expect == self.pre_types.t_logic,
+            Value::Void => expect == self.predefined_types.t_void,
+            Value::Integer(_) => expect == self.predefined_types.t_int,
+            Value::Rational(..) => expect == self.predefined_types.t_rational,
+            Value::Float(_) => expect == self.predefined_types.t_float,
+            Value::Char(_) => expect == self.predefined_types.t_char,
+            Value::Char32(_) => expect == self.predefined_types.t_char32,
+            Value::String(_) => expect == self.predefined_types.t_string,
+            Value::False => expect == self.predefined_types.t_false,
+            Value::Logic(_) => expect == self.predefined_types.t_logic,
             Value::Option { type_id, .. } => expect == *type_id,
             Value::Tuple { type_id, .. } => expect == *type_id,
             Value::Array { type_id, .. } => expect == *type_id,
@@ -660,13 +660,13 @@ impl Vm {
             Value::Ref(_) => unreachable!(),
         };
         if !ok {
-            self.pending_failure = Some(());
+            self.has_pending_failure = true;
         }
     }
 
     fn exec_len(&mut self) {
         let value = self.op_stack.pop().unwrap();
-        let value = self.deref(&value);
+        let value = self.resolve_ref(&value);
         let len = match value {
             Value::String(s) => s.len(),
             Value::Array { elements, .. } => elements.len(),

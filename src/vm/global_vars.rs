@@ -9,22 +9,22 @@ use crate::{
 
 pub fn install(
     vm: &mut Vm,
-    ps: PredefinedSymbols,
-    pt: PredefinedTypes,
+    predefined_symbols: PredefinedSymbols,
+    predefined_types: PredefinedTypes,
     type_reg: &mut TypeRegistry,
     get_symbol_slot: impl Fn(Symbol) -> usize,
 ) {
     let global_vars = [
-        (ps.s_int, Value::Type(pt.t_int)),
-        (ps.s_float, Value::Type(pt.t_float)),
-        (ps.s_logic, Value::Type(pt.t_logic)),
-        (ps.s_char, Value::Type(pt.t_char)),
-        (ps.s_char32, Value::Type(pt.t_char32)),
-        (ps.s_string, Value::Type(pt.t_string)),
-        (ps.s_any, Value::Type(pt.t_any)),
-        (ps.s_void, Value::Type(pt.t_void)),
+        (predefined_symbols.s_int, Value::Type(predefined_types.t_int)),
+        (predefined_symbols.s_float, Value::Type(predefined_types.t_float)),
+        (predefined_symbols.s_logic, Value::Type(predefined_types.t_logic)),
+        (predefined_symbols.s_char, Value::Type(predefined_types.t_char)),
+        (predefined_symbols.s_char32, Value::Type(predefined_types.t_char32)),
+        (predefined_symbols.s_string, Value::Type(predefined_types.t_string)),
+        (predefined_symbols.s_any, Value::Type(predefined_types.t_any)),
+        (predefined_symbols.s_void, Value::Type(predefined_types.t_void)),
         (
-            ps.s_Print,
+            predefined_symbols.s_Print,
             Value::Function {
                 type_id: type_reg.intern(TypeInfo::Function {
                     params: vec![TypeInfo::Any],

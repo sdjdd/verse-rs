@@ -6,11 +6,11 @@ pub fn write_value(
     w: &mut impl Write,
     heap: &dyn Heap,
     value: &Value,
-    quate_string: bool,
+    quote_string: bool,
 ) -> Result<(), std::fmt::Error> {
     match value {
         Value::String(str) => {
-            if quate_string {
+            if quote_string {
                 write!(w, "\"{}\"", str)
             } else {
                 write!(w, "{}", str)
@@ -49,7 +49,7 @@ pub fn write_value(
         Value::Option { value, .. } => {
             if let Some(value) = value {
                 write!(w, "option{{")?;
-                write_value(w, heap, value, quate_string)?;
+                write_value(w, heap, value, quote_string)?;
                 write!(w, "}}")
             } else {
                 write!(w, "option{{}}")
@@ -63,7 +63,7 @@ pub fn write_value(
                 }
                 break value;
             };
-            write_value(w, heap, value, quate_string)
+            write_value(w, heap, value, quote_string)
         }
     }
 }

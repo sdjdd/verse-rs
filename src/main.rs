@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use verse::compiler::{
     compiler::Compiler, lexer::tokenize, parser::Parser, semantic::SemanticAnalyzer,
 };
-use verse::error::{print_parser_error, print_semantic_error};
+use verse::error::{report_parser_error, report_semantic_error};
 use verse::vm::Vm;
 use verse::vm::global_vars;
 
@@ -24,29 +24,29 @@ fn main() {
 
     let program = parser.parse();
     for err in &parser.errors {
-        print_parser_error(err, &source);
+        report_parser_error(err, &source);
     }
     if parser.errors.is_empty() {
-        let mut semantic_ctx = SemanticAnalyzer::new(&mut parser.symbol_reg);
+        let mut analyzer = SemanticAnalyzer::new(&mut parser.symbol_table);
 
-        let entry = semantic_ctx.analyze(&program.expressions);
-        for err in &semantic_ctx.errors {
-            print_semantic_error(&err, &source, &parser.symbol_reg);
+        let root_irs = analyzer.analyze(&program.expressions);
+        for err in &analyzer.errors {
+            report_semantic_error(&err, &source, &parser.symbol_table);
         }
-        if semantic_ctx.errors.is_empty() {
+        if analyzer.errors.is_empty() {
             let mut compiler = Compiler::new();
-            let funcs = compiler.compile(entry);
-            let mut vm = Vm::new(parser.const_pool.into_table(), compiler.predefined_types);
+            let funcs = compiler.compile(root_irs);
+            let mut vm = Vm::new(parser.const_pool.into_vec(), compiler.predefined_types);
             global_vars::install(
                 &mut vm,
-                semantic_ctx.builtin_symbols,
+                analyzer.builtin_symbols,
                 compiler.predefined_types,
                 &mut compiler.type_registry,
-                |s| semantic_ctx.get_global_symbol_index(s),
+                |s| analyzer.get_global_symbol_index(s),
             );
-            let main = funcs.len() - 1;
+            let entry_fn_id = funcs.len() - 1;
             vm.functions = funcs;
-            vm.run(main);
+            vm.run(entry_fn_id);
         }
     }
 }

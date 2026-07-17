@@ -24,7 +24,7 @@ impl ConstPool {
         ConstId(id)
     }
 
-    pub fn into_table(self) -> Vec<ConstValue> {
+    pub fn into_vec(self) -> Vec<ConstValue> {
         self.vec
     }
 }

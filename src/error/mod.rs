@@ -8,7 +8,7 @@ use crate::{
     core::SymbolRegistry,
 };
 
-pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolRegistry) {
+pub fn report_semantic_error(err: &SemanticError, src: &str, symbol_table: &SymbolRegistry) {
     let (span, message) = match err {
         SemanticError::UndefinedName { span } => (
             span,
@@ -53,7 +53,7 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolR
             span,
             format!(
                 "cannot assign to immutable variable `{}`",
-                symbol_tbl.lookup(*symbol)
+                symbol_table.lookup(*symbol)
             ),
         ),
         SemanticError::InvalidAssignmentTarget { span } => {
@@ -101,7 +101,7 @@ pub fn print_semantic_error(err: &SemanticError, src: &str, symbol_tbl: &SymbolR
     print_diagnostic(src, span, &message);
 }
 
-pub fn print_parser_error(err: &ParseError, src: &str) {
+pub fn report_parser_error(err: &ParseError, src: &str) {
     let (span, message) = match err {
         ParseError::UnexpectedToken { token, span } => {
             (span, format!("unexpected token `{token:?}`"))

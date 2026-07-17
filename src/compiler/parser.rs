@@ -34,7 +34,7 @@ pub struct Parser<'src> {
     pos: usize,
     current_token_span: Span,
 
-    pub symbol_reg: SymbolRegistry,
+    pub symbol_table: SymbolRegistry,
     pub const_pool: ConstPool,
     pub errors: Vec<ParseError>,
 }
@@ -46,7 +46,7 @@ impl<'src> Parser<'src> {
             tokens,
             pos: 0,
             current_token_span: 0..0,
-            symbol_reg: SymbolRegistry::new(),
+            symbol_table: SymbolRegistry::new(),
             const_pool: ConstPool::new(),
             errors: Vec::new(),
         }
@@ -83,7 +83,7 @@ impl<'src> Parser<'src> {
     }
 
     fn symbol(&mut self) -> Symbol {
-        self.symbol_reg.intern(self.slice())
+        self.symbol_table.intern(self.slice())
     }
 
     fn unexpected_error(&self) -> ParseError {
@@ -180,7 +180,7 @@ impl<'src> Parser<'src> {
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
         if self.consume_if(Token::Type) {
             if self.consume_if(Token::LBrace) {
-                let expr = self.parse_advance_type_expr()?;
+                let expr = self.parse_function_type_expr()?;
                 self.expect(Token::RBrace)?;
                 return Ok(expr);
             }
@@ -224,14 +224,14 @@ impl<'src> Parser<'src> {
         }
 
         self.expect(Token::Id)?;
-        let symbol = self.symbol_reg.intern(self.slice());
+        let symbol = self.symbol_table.intern(self.slice());
         Ok(TypeExpr {
             kind: TypeExprKind::Named(symbol),
             span: self.span(),
         })
     }
 
-    fn parse_advance_type_expr(&mut self) -> ParseResult<TypeExpr> {
+    fn parse_function_type_expr(&mut self) -> ParseResult<TypeExpr> {
         if self.consume_if(Token::Underscore) {
             let start = self.span().start;
             self.expect(Token::LParen)?;
@@ -305,7 +305,7 @@ impl<'src> Parser<'src> {
         let start = self.span().start;
 
         self.expect(Token::Id)?;
-        let symbol = self.symbol_reg.intern(self.slice());
+        let symbol = self.symbol_table.intern(self.slice());
         let name = IdExpr::new(self.span(), symbol);
 
         self.expect(Token::Colon)?;
@@ -551,7 +551,7 @@ impl<'src> Parser<'src> {
         Ok(Expression::new(start..end, BlockExpr::new(body)))
     }
 
-    fn parse_comma_separate_list<P, E>(&mut self, end: Token, parse: P) -> ParseResult<Vec<E>>
+    fn parse_comma_separated_list<P, E>(&mut self, end: Token, parse: P) -> ParseResult<Vec<E>>
     where
         P: Fn(&mut Self) -> ParseResult<E>,
     {
@@ -581,7 +581,7 @@ impl<'src> Parser<'src> {
             };
             self.next();
 
-            let args = self.parse_comma_separate_list(end, |p| p.parse_expression())?;
+            let args = self.parse_comma_separated_list(end, |p| p.parse_expression())?;
 
             let span = callee.span.start..self.span().end;
 
@@ -616,7 +616,7 @@ impl<'src> Parser<'src> {
         &mut self,
     ) -> ParseResult<(Vec<FunctionParam>, Vec<IdExpr>, TypeExpr)> {
         self.expect(Token::LParen)?;
-        let params = self.parse_comma_separate_list(Token::RParen, |p| {
+        let params = self.parse_comma_separated_list(Token::RParen, |p| {
             p.expect(Token::Id)?;
             let param_name = p.symbol();
             p.expect(Token::Colon)?;

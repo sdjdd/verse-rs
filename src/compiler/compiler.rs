@@ -8,7 +8,7 @@ use crate::{
 };
 
 use super::ast::CompareOp;
-use super::ir::{ExprKind, FunctionExpr, IfExpr, Ir, Slot, TemplateElement};
+use super::ir::*;
 
 #[derive(Default)]
 struct LoopContext {
@@ -21,7 +21,7 @@ pub struct Compiler {
     op_stack_size: u16,
     loop_ctx_stack: Vec<LoopContext>,
     functions: Vec<Function>,
-    start_fn_id: usize,
+    base_fn_id: usize,
     pub type_registry: TypeRegistry,
     pub predefined_types: PredefinedTypes,
 }
@@ -38,7 +38,7 @@ impl Compiler {
             op_stack_size: 0,
             loop_ctx_stack: vec![],
             functions: vec![],
-            start_fn_id: 0,
+            base_fn_id: 0,
         }
     }
 
@@ -59,40 +59,40 @@ impl Compiler {
 
     pub fn compile_ir(&mut self, ir: Ir) {
         match ir.kind {
-            ExprKind::Int(v) => self.compile_int(v),
-            ExprKind::Float(v) => self.compile_float(v),
-            ExprKind::Char(v) => self.compile_char(v),
-            ExprKind::Char32(v) => self.compile_char32(v),
-            ExprKind::String(id) => self.compile_string(id),
-            ExprKind::Logic(v) => self.compile_logic(v),
-            ExprKind::Option(v) => self.compile_option(ir.ty, v),
-            ExprKind::StoreLocal { slot, value } => self.compile_store_local(slot, *value),
-            ExprKind::LoadLocal { slot } => self.compile_load_local(slot),
-            ExprKind::StoreGlobal { slot, value } => self.compile_store_global(slot, *value),
-            ExprKind::LoadGlobal { slot } => self.compile_load_global(slot),
-            ExprKind::StoreUpvalue { index, value } => self.compile_store_upvalue(index, *value),
-            ExprKind::LoadUpvalue { index } => self.compile_load_upvalue(index),
-            ExprKind::Tuple(elems) => self.compile_make(Opcode::MakeTuple, ir.ty, elems),
-            ExprKind::Array(elems) => self.compile_make(Opcode::MakeArray, ir.ty, elems),
-            ExprKind::IndexTuple { tuple, index } => self.compile_index_tuple(*tuple, index),
-            ExprKind::Add((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Add),
-            ExprKind::Sub((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Sub),
-            ExprKind::Mul((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Mul),
-            ExprKind::Div((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Div),
-            ExprKind::Neg(v) => self.compile_unary_op(*v, Opcode::Neg),
-            ExprKind::Not(v) => self.compile_unary_op(*v, Opcode::Not),
-            ExprKind::If(e) => self.compile_if(ir.ty, e),
-            ExprKind::CompareChain(e) => self.compile_cmp_chain(*e.head, e.rest),
-            ExprKind::Loop(ir) => self.compile_loop(*ir),
-            ExprKind::Break => self.compile_break(),
-            ExprKind::Block(irs) => self.compile_block(irs),
-            ExprKind::Func(fn_ir) => self.compile_function(fn_ir, ir.ty),
-            ExprKind::Call(ir) => self.compile_call(*ir.callee, ir.args),
-            ExprKind::Template(elems) => self.compile_template(elems),
-            ExprKind::Type(type_id) => self.compile_type_literal(type_id),
-            ExprKind::Cast { ty, value } => self.compile_cast(ty, *value),
-            ExprKind::GetLength(ir) => self.compile_get_len(*ir),
-            ExprKind::Concat(irs) => self.compile_concat(irs),
+            IrKind::Int(v) => self.compile_int(v),
+            IrKind::Float(v) => self.compile_float(v),
+            IrKind::Char(v) => self.compile_char(v),
+            IrKind::Char32(v) => self.compile_char32(v),
+            IrKind::String(id) => self.compile_string(id),
+            IrKind::Logic(v) => self.compile_logic(v),
+            IrKind::Option(v) => self.compile_option(ir.ty, v),
+            IrKind::StoreLocal { slot, value } => self.compile_store_local(slot, *value),
+            IrKind::LoadLocal { slot } => self.compile_load_local(slot),
+            IrKind::StoreGlobal { slot, value } => self.compile_store_global(slot, *value),
+            IrKind::LoadGlobal { slot } => self.compile_load_global(slot),
+            IrKind::StoreUpvalue { index, value } => self.compile_store_upvalue(index, *value),
+            IrKind::LoadUpvalue { index } => self.compile_load_upvalue(index),
+            IrKind::Tuple(elems) => self.compile_collection(Opcode::MakeTuple, ir.ty, elems),
+            IrKind::Array(elems) => self.compile_collection(Opcode::MakeArray, ir.ty, elems),
+            IrKind::IndexTuple { tuple, index } => self.compile_index_tuple(*tuple, index),
+            IrKind::Add((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Add),
+            IrKind::Sub((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Sub),
+            IrKind::Mul((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Mul),
+            IrKind::Div((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Div),
+            IrKind::Neg(v) => self.compile_unary_op(*v, Opcode::Neg),
+            IrKind::Not(v) => self.compile_unary_op(*v, Opcode::Not),
+            IrKind::If(e) => self.compile_if(ir.ty, e),
+            IrKind::CompareChain(e) => self.compile_cmp_chain(*e.head, e.rest),
+            IrKind::Loop(ir) => self.compile_loop(*ir),
+            IrKind::Break => self.compile_break(),
+            IrKind::Block(irs) => self.compile_block(irs),
+            IrKind::Func(fn_ir) => self.compile_function(fn_ir, ir.ty),
+            IrKind::Call(ir) => self.compile_call(*ir.callee, ir.args),
+            IrKind::Template(elems) => self.compile_template(elems),
+            IrKind::Type(type_id) => self.compile_type_literal(type_id),
+            IrKind::Cast { ty, value } => self.compile_cast(ty, *value),
+            IrKind::GetLength(ir) => self.compile_len(*ir),
+            IrKind::Concat(irs) => self.compile_concat(irs),
         }
     }
 
@@ -227,7 +227,7 @@ impl Compiler {
         self.append_u32(index as u32);
     }
 
-    fn compile_make(&mut self, op: Opcode, type_info: TypeInfo, irs: Vec<Ir>) {
+    fn compile_collection(&mut self, op: Opcode, type_info: TypeInfo, irs: Vec<Ir>) {
         let type_id = self.intern_type(type_info);
         let argc = irs.len();
         assert!(argc < u16::MAX as usize);
@@ -277,7 +277,7 @@ impl Compiler {
         self.append_op(Opcode::Pop, -1);
     }
 
-    fn compile_if(&mut self, type_info: TypeInfo, if_ir: IfExpr) {
+    fn compile_if(&mut self, type_info: TypeInfo, if_ir: IfIr) {
         let mut handler = FailureHandler {
             start_pc: self.bytecode.len() as u32,
             end_pc: 0,
@@ -343,9 +343,9 @@ impl Compiler {
         }
     }
 
-    fn compile_function(&mut self, fn_ir: FunctionExpr, fn_type: TypeInfo) {
+    fn compile_function(&mut self, fn_ir: FunctionIr, fn_type: TypeInfo) {
         let mut compiler = Compiler::new();
-        compiler.start_fn_id = self.functions.len();
+        compiler.base_fn_id = self.functions.len();
         compiler.compile_function_body(*fn_ir.body, fn_ir.return_void);
         let func = Function {
             type_id: self.intern_type(fn_type),
@@ -354,7 +354,7 @@ impl Compiler {
             upvalues: fn_ir.upvalues,
         };
         self.functions.extend(compiler.functions);
-        let fn_id = self.start_fn_id + self.functions.len();
+        let fn_id = self.base_fn_id + self.functions.len();
         self.functions.push(func);
 
         self.append_op(Opcode::MakeClosure, 1);
@@ -364,7 +364,7 @@ impl Compiler {
     }
 
     fn compile_function_body(&mut self, body: Ir, return_void: bool) {
-        if let ExprKind::Block(irs) = body.kind {
+        if let IrKind::Block(irs) = body.kind {
             let len = irs.len();
             for (i, ir) in irs.into_iter().enumerate() {
                 self.compile_ir(ir);
@@ -404,15 +404,15 @@ impl Compiler {
         self.append_u32(count as u32);
     }
 
-    fn compile_template(&mut self, elements: Vec<TemplateElement>) {
+    fn compile_template(&mut self, elements: Vec<TemplateElementIr>) {
         let count = elements.len();
         for elem in elements {
             match elem {
-                TemplateElement::Expr(ir) => {
+                TemplateElementIr::Expr(ir) => {
                     self.compile_ir(*ir);
                     self.append_op(Opcode::ToString, 0);
                 }
-                TemplateElement::String(id) => {
+                TemplateElementIr::String(id) => {
                     self.append_op(Opcode::PushString, 1);
                     self.append_u32(id.0 as u32);
                     self.op_stack_size += 1;
@@ -436,7 +436,7 @@ impl Compiler {
         self.append_u32(type_id.0 as u32);
     }
 
-    fn compile_get_len(&mut self, value: Ir) {
+    fn compile_len(&mut self, value: Ir) {
         self.compile_ir(value);
         self.append_op(Opcode::Len, 0);
     }
