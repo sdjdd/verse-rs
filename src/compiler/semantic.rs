@@ -362,32 +362,7 @@ impl SemanticAnalyzer {
                     })
                 }
 
-                let ir = if var.is_global {
-                    Ir {
-                        kind: IrKind::StoreGlobal {
-                            slot: var.slot,
-                            value: value.into(),
-                        },
-                        ty: var.type_info,
-                    }
-                } else if var.is_upvalue {
-                    Ir {
-                        kind: IrKind::StoreUpvalue {
-                            index: self.capture(var.scope_index, var.slot),
-                            value: value.into(),
-                        },
-                        ty: var.type_info,
-                    }
-                } else {
-                    Ir {
-                        kind: IrKind::StoreLocal {
-                            slot: var.slot,
-                            value: value.into(),
-                        },
-                        ty: var.type_info,
-                    }
-                };
-                Some(ir)
+                Some(self.make_store_ir(&var, value))
             }
             _ => {
                 self.errors.push(SemanticError::InvalidAssignmentTarget {
@@ -400,27 +375,59 @@ impl SemanticAnalyzer {
 
     fn lower_id_expr(&mut self, span: Span, expr: &IdExpr) -> Option<Ir> {
         if let Some(var) = self.lookup(&expr.symbol) {
-            let ir = if var.is_global {
-                Ir {
-                    kind: IrKind::LoadGlobal { slot: var.slot },
-                    ty: var.type_info,
-                }
-            } else if var.is_upvalue {
-                let index = self.capture(var.scope_index, var.slot);
-                Ir {
-                    kind: IrKind::LoadUpvalue { index },
-                    ty: var.type_info,
-                }
-            } else {
-                Ir {
-                    kind: IrKind::LoadLocal { slot: var.slot },
-                    ty: var.type_info,
-                }
-            };
-            Some(ir)
+            Some(self.make_load_ir(&var))
         } else {
             self.errors.push(SemanticError::UndefinedName { span });
             None
+        }
+    }
+
+    fn make_load_ir(&mut self, var: &LookupResult) -> Ir {
+        if var.is_global {
+            Ir {
+                kind: IrKind::LoadGlobal { slot: var.slot },
+                ty: var.type_info.clone(),
+            }
+        } else if var.is_upvalue {
+            let index = self.capture(var.scope_index, var.slot);
+            Ir {
+                kind: IrKind::LoadUpvalue { index },
+                ty: var.type_info.clone(),
+            }
+        } else {
+            Ir {
+                kind: IrKind::LoadLocal { slot: var.slot },
+                ty: var.type_info.clone(),
+            }
+        }
+    }
+
+    fn make_store_ir(&mut self, var: &LookupResult, value: Ir) -> Ir {
+        let ty = var.type_info.clone();
+        if var.is_global {
+            Ir {
+                kind: IrKind::StoreGlobal {
+                    slot: var.slot,
+                    value: Box::new(value),
+                },
+                ty,
+            }
+        } else if var.is_upvalue {
+            Ir {
+                kind: IrKind::StoreUpvalue {
+                    index: self.capture(var.scope_index, var.slot),
+                    value: Box::new(value),
+                },
+                ty,
+            }
+        } else {
+            Ir {
+                kind: IrKind::StoreLocal {
+                    slot: var.slot,
+                    value: Box::new(value),
+                },
+                ty,
+            }
         }
     }
 
@@ -681,74 +688,11 @@ impl SemanticAnalyzer {
     fn lower_call_expr(&mut self, span: Span, expr: &CallExpr) -> Option<Ir> {
         let callee_ir = self.lower_expr(&expr.callee)?;
 
-        let mut arg_irs = vec![];
         match &callee_ir.ty {
             TypeInfo::Function { params, ret } => {
-                if params.len() != expr.args.len() {
-                    self.errors.push(SemanticError::ArgCountMismatch {
-                        span: expr.callee.span.clone(),
-                        expected: params.len(),
-                        found: expr.args.len(),
-                    })
-                }
-                for (param_type, arg) in params.iter().zip(expr.args.iter()) {
-                    let arg_ir = self.lower_expr(arg)?;
-                    if !self.is_assignable_to(&arg_ir.ty, param_type) {
-                        self.errors.push(SemanticError::TypeMismatch {
-                            span: arg.span.clone(),
-                            expected: param_type.clone(),
-                            found: arg_ir.ty.clone(),
-                        })
-                    }
-                    arg_irs.push(arg_ir);
-                }
-                let return_type = ret.clone();
-                Some(Ir {
-                    kind: IrKind::Call(CallIr {
-                        callee: callee_ir.into(),
-                        args: arg_irs,
-                    }),
-                    ty: *return_type,
-                })
+                self.lower_function_call(expr, &callee_ir, params, ret)
             }
-            TypeInfo::Tuple(elements) => {
-                if expr.args.len() != 1 {
-                    self.errors.push(SemanticError::ArgCountMismatch {
-                        span: span.clone(),
-                        expected: 1,
-                        found: expr.args.len(),
-                    });
-                }
-                if let Some(arg) = expr.args.first() {
-                    let arg = self.lower_expr(arg)?;
-                    if let IrKind::Int(index) = arg.kind {
-                        if index < 0 || index as usize >= elements.len() {
-                            self.errors.push(SemanticError::TupleIndexOutOfBounds {
-                                span: expr.args[0].span.clone(),
-                                index,
-                                length: elements.len(),
-                            });
-                            None
-                        } else {
-                            let type_info = elements[index as usize].clone();
-                            Some(Ir {
-                                kind: IrKind::IndexTuple {
-                                    tuple: callee_ir.into(),
-                                    index: index as usize,
-                                },
-                                ty: type_info,
-                            })
-                        }
-                    } else {
-                        self.errors.push(SemanticError::InvalidTupleIndex {
-                            span: expr.args[0].span.clone(),
-                        });
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
+            TypeInfo::Tuple(elements) => self.lower_tuple_index(expr, &callee_ir, elements),
             TypeInfo::Type(type_id) => self.lower_type_cast(span, &expr.args, type_id),
             _ => {
                 self.errors.push(SemanticError::NotCallable {
@@ -760,37 +704,91 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn lower_function_call(
+        &mut self,
+        expr: &CallExpr,
+        callee_ir: &Ir,
+        params: &[TypeInfo],
+        ret: &Box<TypeInfo>,
+    ) -> Option<Ir> {
+        if params.len() != expr.args.len() {
+            self.errors.push(SemanticError::ArgCountMismatch {
+                span: expr.callee.span.clone(),
+                expected: params.len(),
+                found: expr.args.len(),
+            })
+        }
+
+        let mut arg_irs = vec![];
+        for (param_type, arg) in params.iter().zip(expr.args.iter()) {
+            let arg_ir = self.lower_expr(arg)?;
+            if !self.is_assignable_to(&arg_ir.ty, param_type) {
+                self.errors.push(SemanticError::TypeMismatch {
+                    span: arg.span.clone(),
+                    expected: param_type.clone(),
+                    found: arg_ir.ty.clone(),
+                })
+            }
+            arg_irs.push(arg_ir);
+        }
+
+        Some(Ir {
+            kind: IrKind::Call(CallIr {
+                callee: Box::new(callee_ir.clone()),
+                args: arg_irs,
+            }),
+            ty: *ret.clone(),
+        })
+    }
+
+    fn lower_tuple_index(
+        &mut self,
+        expr: &CallExpr,
+        callee_ir: &Ir,
+        elements: &[TypeInfo],
+    ) -> Option<Ir> {
+        if expr.args.len() != 1 {
+            self.errors.push(SemanticError::ArgCountMismatch {
+                span: expr.callee.span.clone(),
+                expected: 1,
+                found: expr.args.len(),
+            });
+        }
+
+        let arg = self.lower_expr(expr.args.first()?)?;
+        match arg.kind {
+            IrKind::Int(index) if index >= 0 && (index as usize) < elements.len() => {
+                Some(Ir {
+                    kind: IrKind::IndexTuple {
+                        tuple: Box::new(callee_ir.clone()),
+                        index: index as usize,
+                    },
+                    ty: elements[index as usize].clone(),
+                })
+            }
+            IrKind::Int(index) => {
+                self.errors.push(SemanticError::TupleIndexOutOfBounds {
+                    span: expr.args[0].span.clone(),
+                    index,
+                    length: elements.len(),
+                });
+                None
+            }
+            _ => {
+                self.errors.push(SemanticError::InvalidTupleIndex {
+                    span: expr.args[0].span.clone(),
+                });
+                None
+            }
+        }
+    }
+
     fn lower_binary_expr(&mut self, span: Span, expr: &BinaryExpr) -> Option<Ir> {
         let lhs = self.lower_expr(&expr.lhs)?;
         let rhs = self.lower_expr(&expr.rhs)?;
 
         if lhs.ty == TypeInfo::String {
-            if expr.op == BinaryOp::Add {
-                if rhs.ty == lhs.ty {
-                    let mut irs = vec![];
-                    flatten_add_ir(lhs, &mut irs);
-                    flatten_add_ir(rhs, &mut irs);
-                    return Some(Ir {
-                        ty: TypeInfo::String,
-                        kind: IrKind::Concat(irs),
-                    });
-                } else {
-                    self.errors.push(SemanticError::TypeMismatch {
-                        span,
-                        expected: lhs.ty,
-                        found: rhs.ty,
-                    });
-                    return None;
-                }
-            } else {
-                self.errors.push(SemanticError::InvalidBinaryOp {
-                    span: expr.op_span.clone(),
-                    op: expr.op,
-                    lhs: lhs.ty.clone(),
-                    rhs: rhs.ty.clone(),
-                });
-                return None;
-            }
+            return self.lower_string_binary(expr, lhs, rhs, span);
         }
 
         let type_id = if lhs.ty == rhs.ty {
@@ -823,6 +821,41 @@ impl SemanticAnalyzer {
         };
 
         Some(Ir { kind, ty: type_id })
+    }
+
+    fn lower_string_binary(
+        &mut self,
+        expr: &BinaryExpr,
+        lhs: Ir,
+        rhs: Ir,
+        span: Span,
+    ) -> Option<Ir> {
+        if expr.op != BinaryOp::Add {
+            self.errors.push(SemanticError::InvalidBinaryOp {
+                span: expr.op_span.clone(),
+                op: expr.op,
+                lhs: lhs.ty.clone(),
+                rhs: rhs.ty.clone(),
+            });
+            return None;
+        }
+
+        if rhs.ty != lhs.ty {
+            self.errors.push(SemanticError::TypeMismatch {
+                span,
+                expected: lhs.ty,
+                found: rhs.ty,
+            });
+            return None;
+        }
+
+        let mut irs = vec![];
+        flatten_add_ir(lhs, &mut irs);
+        flatten_add_ir(rhs, &mut irs);
+        Some(Ir {
+            ty: TypeInfo::String,
+            kind: IrKind::Concat(irs),
+        })
     }
 
     fn lower_unary_expr(&mut self, expr: &UnaryExpr) -> Option<Ir> {
