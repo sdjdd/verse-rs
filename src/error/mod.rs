@@ -27,16 +27,14 @@ pub fn report_semantic_error(err: &SemanticError, src: &str) {
         } => {
             let op_str = fmt_unary_op(op);
             let expected: Vec<String> = expected.iter().map(|t| format!("`{t}`")).collect();
+            let expected_str = match expected.len() {
+                0 => String::new(),
+                1 => format!(" (expected {})", expected[0]),
+                _ => format!(" (expected one of: {})", expected.join(", ")),
+            };
             (
                 span,
-                format!(
-                    "cannot apply unary `{op_str}` to type `{operand}`{}",
-                    if expected.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" (expected one of: {})", expected.join(", "))
-                    }
-                ),
+                format!("cannot apply unary `{op_str}` to type `{operand}`{expected_str}"),
             )
         }
         SemanticError::InvalidBinaryOp { span, op, lhs, rhs } => (
@@ -149,7 +147,7 @@ fn fmt_unary_op(op: &UnaryOp) -> &'static str {
     match op {
         UnaryOp::Plus => "+",
         UnaryOp::Minus => "-",
-        UnaryOp::Not => "!",
+        UnaryOp::Not => "not",
     }
 }
 
