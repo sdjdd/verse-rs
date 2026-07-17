@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 use ordermap::OrderSet;
 
 use crate::runtime::TypeId;
@@ -27,6 +29,48 @@ pub enum TypeInfo {
     Type(Box<TypeInfo>),
 
     Bottom,
+}
+
+impl Display for TypeInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeInfo::Void => write!(f, "void"),
+            TypeInfo::Any => write!(f, "any"),
+            TypeInfo::Int => write!(f, "int"),
+            TypeInfo::Float => write!(f, "float"),
+            TypeInfo::Rational => write!(f, "rational"),
+            TypeInfo::True => write!(f, "true"),
+            TypeInfo::False => write!(f, "false"),
+            TypeInfo::Logic => write!(f, "logic"),
+            TypeInfo::Char => write!(f, "char"),
+            TypeInfo::Char32 => write!(f, "char32"),
+            TypeInfo::String => write!(f, "string"),
+            TypeInfo::Option(inner) => write!(f, "?{inner}"),
+            TypeInfo::Tuple(elements) => {
+                write!(f, "tuple(")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, ")")
+            }
+            TypeInfo::Array(elem) => write!(f, "[]{elem}"),
+            TypeInfo::Function { params, ret } => {
+                write!(f, "(")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, ":{param}")?;
+                }
+                write!(f, "): {ret}")
+            }
+            TypeInfo::Type(inner) => write!(f, "{inner}"),
+            TypeInfo::Bottom => write!(f, "bottom"),
+        }
+    }
 }
 
 #[derive(Default)]

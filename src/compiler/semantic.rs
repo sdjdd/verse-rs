@@ -1,6 +1,5 @@
 use ordermap::OrderSet;
 use std::collections::HashMap;
-use thiserror::Error;
 
 use crate::core::{
     PredefinedSymbols, Symbol, SymbolRegistry,
@@ -213,7 +212,7 @@ impl SemanticAnalyzer {
     fn check_fallible_expr_allowing(&mut self, span: Span) {
         if self.failure_contexts == 0 {
             self.errors
-                .push(SemanticError::FallibleExprNotAllowed { span })
+                .push(SemanticError::UnexpectedFallibleExpr { span })
         }
     }
 
@@ -311,7 +310,7 @@ impl SemanticAnalyzer {
             if !self.is_assignable_to(&value_ir.ty, &binding_type) {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: value.span.clone(),
-                    expect: binding_type.clone(),
+                    expected: binding_type.clone(),
                     found: value_ir.ty.clone(),
                 })
             }
@@ -343,9 +342,8 @@ impl SemanticAnalyzer {
                 let var = match self.lookup(&id_expr.symbol) {
                     Some(var) => var,
                     None => {
-                        self.errors.push(SemanticError::Reference {
+                        self.errors.push(SemanticError::UndefinedName {
                             span: expr.lhs.span.clone(),
-                            symbol: id_expr.symbol,
                         });
                         return None;
                     }
@@ -354,12 +352,12 @@ impl SemanticAnalyzer {
                 if var.type_info != value.ty {
                     self.errors.push(SemanticError::TypeMismatch {
                         span: expr.rhs.span.clone(),
-                        expect: var.type_info.clone(),
+                        expected: var.type_info.clone(),
                         found: value.ty.clone(),
                     })
                 }
                 if !var.mutable {
-                    self.errors.push(SemanticError::Mutability {
+                    self.errors.push(SemanticError::ImmutableAssignment {
                         span: expr.lhs.span.clone(),
                         symbol: id_expr.symbol,
                     })
@@ -393,9 +391,8 @@ impl SemanticAnalyzer {
                 Some(ir)
             }
             _ => {
-                self.errors.push(SemanticError::InvalidLeftHandSide {
+                self.errors.push(SemanticError::InvalidAssignmentTarget {
                     span: expr.lhs.span.clone(),
-                    expr: *expr.lhs.clone(),
                 });
                 None
             }
@@ -423,9 +420,8 @@ impl SemanticAnalyzer {
             };
             Some(ir)
         } else {
-            self.errors.push(SemanticError::Reference {
+            self.errors.push(SemanticError::UndefinedName {
                 span,
-                symbol: expr.symbol,
             });
             None
         }
@@ -465,7 +461,7 @@ impl SemanticAnalyzer {
             if ir.ty != head_ir.ty {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: expr.span.clone(),
-                    expect: head_ir.ty.clone(),
+                    expected: head_ir.ty.clone(),
                     found: ir.ty.clone(),
                 });
             }
@@ -531,7 +527,7 @@ impl SemanticAnalyzer {
         let test_ir = test_ir?;
 
         if !test_ir.kind.is_fallible() {
-            self.errors.push(SemanticError::FallibleExprOnly {
+            self.errors.push(SemanticError::ExpectedFallibleExpr {
                 span: expr.test.span.clone(),
             })
         }
@@ -627,7 +623,7 @@ impl SemanticAnalyzer {
             if !self.is_assignable_to(&body.ty, &return_type) {
                 self.errors.push(SemanticError::TypeMismatch {
                     span: expr.body.span.clone(),
-                    expect: return_type.clone(),
+                    expected: return_type.clone(),
                     found: body.ty.clone(),
                 })
             }
@@ -664,7 +660,11 @@ impl SemanticAnalyzer {
         self.check_fallible_expr_allowing(span.clone());
 
         if args.len() != 1 {
-            self.errors.push(SemanticError::ArgsCountMismatch { span });
+            self.errors.push(SemanticError::ArgCountMismatch {
+                span,
+                expected: 1,
+                found: args.len(),
+            });
         }
 
         if let Some(arg) = args.first() {
@@ -688,8 +688,10 @@ impl SemanticAnalyzer {
         match &callee_ar.ty {
             TypeInfo::Function { params, ret } => {
                 if params.len() != expr.args.len() {
-                    self.errors.push(SemanticError::ArgsCountMismatch {
+                    self.errors.push(SemanticError::ArgCountMismatch {
                         span: expr.callee.span.clone(),
+                        expected: params.len(),
+                        found: expr.args.len(),
                     })
                 }
                 for (param_type, arg) in params.iter().zip(expr.args.iter()) {
@@ -697,7 +699,7 @@ impl SemanticAnalyzer {
                     if !self.is_assignable_to(&arg_ir.ty, param_type) {
                         self.errors.push(SemanticError::TypeMismatch {
                             span: arg.span.clone(),
-                            expect: param_type.clone(),
+                            expected: param_type.clone(),
                             found: arg_ir.ty.clone(),
                         })
                     }
@@ -714,7 +716,11 @@ impl SemanticAnalyzer {
             }
             TypeInfo::Tuple(elements) => {
                 if expr.args.len() != 1 {
-                    self.errors.push(SemanticError::ArgsCountMismatch { span });
+                    self.errors.push(SemanticError::ArgCountMismatch {
+                        span: span.clone(),
+                        expected: 1,
+                        found: expr.args.len(),
+                    });
                 }
                 if let Some(arg) = expr.args.first() {
                     let arg = self.handle_expr(arg)?;
@@ -728,10 +734,8 @@ impl SemanticAnalyzer {
                             ty: type_info,
                         })
                     } else {
-                        self.errors.push(SemanticError::UnexpectedExpr {
+                        self.errors.push(SemanticError::InvalidTupleIndex {
                             span: expr.args[0].span.clone(),
-                            expect: "integer".to_string(),
-                            found: format!("{:?}", expr.args[0]),
                         });
                         None
                     }
@@ -742,7 +746,8 @@ impl SemanticAnalyzer {
             TypeInfo::Type(type_id) => self.handle_type_cast(span, &expr.args, type_id),
             _ => {
                 self.errors.push(SemanticError::NotCallable {
-                    callee: expr.callee.as_ref().clone(),
+                    span: expr.callee.span.clone(),
+                    ty: callee_ar.ty.clone(),
                 });
                 None
             }
@@ -766,7 +771,7 @@ impl SemanticAnalyzer {
                 } else {
                     self.errors.push(SemanticError::TypeMismatch {
                         span,
-                        expect: lhs.ty,
+                        expected: lhs.ty,
                         found: rhs.ty,
                     });
                     return None;
@@ -775,6 +780,8 @@ impl SemanticAnalyzer {
                 self.errors.push(SemanticError::InvalidBinaryOp {
                     span: expr.op_span.clone(),
                     op: expr.op,
+                    lhs: lhs.ty.clone(),
+                    rhs: rhs.ty.clone(),
                 });
                 return None;
             }
@@ -785,7 +792,7 @@ impl SemanticAnalyzer {
         } else {
             self.errors.push(SemanticError::TypeMismatch {
                 span: span.clone(),
-                expect: lhs.ty.clone(),
+                expected: lhs.ty.clone(),
                 found: rhs.ty.clone(),
             });
             TypeInfo::Any
@@ -813,13 +820,11 @@ impl SemanticAnalyzer {
                         kind: ir::ExprKind::Neg(ir.into()),
                     })
                 } else {
-                    self.errors.push(SemanticError::TypeError {
+                    self.errors.push(SemanticError::InvalidUnaryOp {
                         span: expr.expr.span.clone(),
-                        kind: TypeError::InvalidUnaryOperand {
-                            op: expr.op,
-                            operand: ir.ty,
-                            expected: expected_types,
-                        },
+                        op: expr.op,
+                        operand: ir.ty,
+                        expected: expected_types,
                     });
                     None
                 }
@@ -838,17 +843,14 @@ impl SemanticAnalyzer {
                     if let TypeInfo::Type(inner_type) = binding.type_info {
                         return *inner_type;
                     } else {
-                        self.errors.push(SemanticError::UnexpectedExpr {
+                        self.errors.push(SemanticError::ExpectedTypeGotValue {
                             span: expr.span.clone(),
-                            expect: "type".to_string(),
-                            found: "value".to_string(),
                         });
                         return TypeInfo::Any;
                     }
                 }
-                self.errors.push(SemanticError::TypeNotFound {
+                self.errors.push(SemanticError::UndefinedName {
                     span: expr.span.clone(),
-                    symbol: *symbol,
                 });
                 TypeInfo::Any
             })(),
@@ -938,7 +940,7 @@ impl SemanticAnalyzer {
                 if !self.is_assignable_to(&ir.ty, &head.ty) {
                     self.errors.push(SemanticError::TypeMismatch {
                         span: arg.span.clone(),
-                        expect: head.ty.clone(),
+                        expected: head.ty.clone(),
                         found: ir.ty.clone(),
                     });
                 }
@@ -963,63 +965,50 @@ fn flatten_add_ir(ir: Ir, out: &mut Vec<Ir>) {
 }
 
 #[derive(Debug)]
-pub enum TypeError {
-    InvalidUnaryOperand {
+pub enum SemanticError {
+    UndefinedName { span: Span },
+
+    TypeMismatch {
+        span: Span,
+        expected: TypeInfo,
+        found: TypeInfo,
+    },
+
+    InvalidUnaryOp {
+        span: Span,
         op: UnaryOp,
         operand: TypeInfo,
         expected: Vec<TypeInfo>,
     },
-}
 
-#[derive(Error, Debug)]
-pub enum SemanticError {
-    #[error("{span:?}: cannot mutate immutable {symbol:?}")]
-    Mutability { span: Span, symbol: Symbol },
-
-    #[error("{span:?} mismatched types")]
-    TypeMismatch {
+    InvalidBinaryOp {
         span: Span,
-        expect: TypeInfo,
-        found: TypeInfo,
+        op: BinaryOp,
+        lhs: TypeInfo,
+        rhs: TypeInfo,
     },
 
-    #[error("{span:?} cannot resolve value {symbol:?}")]
-    Reference { span: Span, symbol: Symbol },
+    ImmutableAssignment { span: Span, symbol: Symbol },
 
-    #[error("{span:?} cannot resolve type {symbol:?}")]
-    TypeNotFound { span: Span, symbol: Symbol },
+    InvalidAssignmentTarget { span: Span },
 
-    #[error("{span:?} arguments count mismatch")]
-    ArgsCountMismatch { span: Span },
+    NotCallable { span: Span, ty: TypeInfo },
 
-    #[error("{span:?} unexpected expression")]
-    UnexpectedExpr {
+    ArgCountMismatch {
         span: Span,
-        expect: String,
-        found: String,
+        expected: usize,
+        found: usize,
     },
 
-    #[error("is not callable")]
-    NotCallable { callee: Expression },
+    InvalidTupleIndex { span: Span },
 
-    #[error("type error")]
-    TypeError { span: Span, kind: TypeError },
+    ExpectedTypeGotValue { span: Span },
 
-    #[error("'break' is not allowed outside of a loop")]
     BreakOutsideLoop { span: Span },
 
-    #[error("cannot apply {:?}", op)]
-    InvalidBinaryOp { span: Span, op: BinaryOp },
-
-    #[error("invalid left-side-hand of set")]
-    InvalidLeftHandSide { span: Span, expr: Expression },
-
-    #[error("invalid function effect")]
     InvalidEffect { span: Span },
 
-    #[error("fallible expression not allowed here")]
-    FallibleExprNotAllowed { span: Span },
+    UnexpectedFallibleExpr { span: Span },
 
-    #[error("no fallible expression not allowed here")]
-    FallibleExprOnly { span: Span },
+    ExpectedFallibleExpr { span: Span },
 }
