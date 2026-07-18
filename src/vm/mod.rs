@@ -58,6 +58,7 @@ pub enum Opcode {
     MakeArray,
 
     IndexTuple,
+    IndexArray,
 
     ToString,
     Concat,
@@ -248,6 +249,7 @@ impl Vm {
             Opcode::MakeArray => self.exec_make_array(),
             Opcode::MakeClosure => self.exec_make_closure(),
             Opcode::IndexTuple => self.exec_index_tuple(),
+            Opcode::IndexArray => self.exec_index_array(),
             Opcode::Add => self.exec_add(),
             Opcode::Sub => self.exec_sub(),
             Opcode::Mul => self.exec_mul(),
@@ -429,6 +431,24 @@ impl Vm {
             _ => unreachable!(),
         };
         self.op_stack.push(elems[elem_idx].clone());
+    }
+
+    fn exec_index_array(&mut self) {
+        let index = match self.op_stack.pop().unwrap() {
+            Value::Integer(v) => v,
+            _ => unreachable!(),
+        };
+        let value = match &self.op_stack.pop().unwrap() {
+            Value::Array { elements, .. } => {
+                if index < 0 || (index as usize) >= elements.len() {
+                    self.has_pending_failure = true;
+                    return;
+                }
+                elements[index as usize].clone()
+            }
+            _ => unreachable!(),
+        };
+        self.op_stack.push(value);
     }
 
     fn exec_add(&mut self) {

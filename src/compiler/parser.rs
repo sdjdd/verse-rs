@@ -577,9 +577,7 @@ impl<'src> Parser<'src> {
     }
 
     fn synchronize_to(&mut self, end: Token) {
-        while !matches!(self.peek(), Token::Newline | Token::EOF)
-            && self.peek() != end
-        {
+        while !matches!(self.peek(), Token::Newline | Token::EOF) && self.peek() != end {
             self.next();
         }
     }
@@ -606,7 +604,7 @@ impl<'src> Parser<'src> {
                 ExprKind::Call(CallExpr {
                     callee: callee.into(),
                     args,
-                    handle_failure: end == Token::RBracket,
+                    fallible: end == Token::RBracket,
                 })
             };
 

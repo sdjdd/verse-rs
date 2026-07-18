@@ -107,7 +107,7 @@ pub struct VarDeclExpr {
 pub struct CallExpr {
     pub callee: Box<Expression>,
     pub args: Vec<Expression>,
-    pub handle_failure: bool,
+    pub fallible: bool,
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]

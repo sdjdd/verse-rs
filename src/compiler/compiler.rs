@@ -75,6 +75,7 @@ impl Compiler {
             IrKind::Tuple(elems) => self.compile_collection(Opcode::MakeTuple, ir.ty, elems),
             IrKind::Array(elems) => self.compile_collection(Opcode::MakeArray, ir.ty, elems),
             IrKind::IndexTuple { tuple, index } => self.compile_index_tuple(*tuple, index),
+            IrKind::IndexArray { array, index } => self.compile_index_array(*array, *index),
             IrKind::Add((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Add),
             IrKind::Sub((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Sub),
             IrKind::Mul((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Mul),
@@ -244,6 +245,12 @@ impl Compiler {
         self.compile_ir(value);
         self.append_op(Opcode::IndexTuple, 0);
         self.append_u8(index as u8);
+    }
+
+    fn compile_index_array(&mut self, value: Ir, index: Ir) {
+        self.compile_ir(value);
+        self.compile_ir(index);
+        self.append_op(Opcode::IndexArray, 0);
     }
 
     fn compile_bin_op(&mut self, lhs: Ir, rhs: Ir, op: Opcode) {

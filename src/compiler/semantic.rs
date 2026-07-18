@@ -66,6 +66,9 @@ pub enum SemanticErrorKind {
 
     #[error("expected a fallible expression")]
     ExpectedFallibleExpr,
+
+    #[error("invalid expression")]
+    InvalidExpression,
 }
 
 #[derive(Debug, Clone)]
@@ -269,10 +272,10 @@ impl<'a> SemanticAnalyzer<'a> {
         self.failure_contexts -= 1;
     }
 
-    fn ensure_not_fallible(&mut self, span: Span) {
+    fn ensure_not_fallible(&mut self, span: &Span) {
         if self.failure_contexts == 0 {
             self.errors.push(SemanticError {
-                span,
+                span: span.clone(),
                 kind: SemanticErrorKind::UnexpectedFallibleExpr,
             })
         }
@@ -533,7 +536,7 @@ impl<'a> SemanticAnalyzer<'a> {
         // TODO: check if items are comparable
         // Currently just check if they are the same type
 
-        self.ensure_not_fallible(span.clone());
+        self.ensure_not_fallible(&span);
 
         let head_ir = self.lower_expr(&expr.head)?;
 
@@ -746,7 +749,7 @@ impl<'a> SemanticAnalyzer<'a> {
         args: &[Expression],
         type_info: &TypeInfo,
     ) -> Option<Ir> {
-        self.ensure_not_fallible(span.clone());
+        self.ensure_not_fallible(&span);
 
         if args.len() != 1 {
             self.errors.push(SemanticError {
@@ -779,8 +782,37 @@ impl<'a> SemanticAnalyzer<'a> {
             TypeInfo::Function { params, ret } => {
                 self.lower_function_call(expr, &callee_ir, params, ret)
             }
-            TypeInfo::Tuple(elements) => self.lower_tuple_index(expr, &callee_ir, elements),
-            TypeInfo::Type(type_id) => self.lower_type_cast(span, &expr.args, type_id),
+            TypeInfo::Tuple(_) => {
+                if expr.fallible || expr.args.len() != 1 {
+                    self.errors.push(SemanticError {
+                        span: span.clone(),
+                        kind: SemanticErrorKind::InvalidExpression,
+                    });
+                    return None;
+                }
+                self.lower_tuple_index(callee_ir, &expr.args[0])
+            }
+            TypeInfo::Array(_) => {
+                self.ensure_not_fallible(&span);
+                if !expr.fallible || expr.args.len() != 1 {
+                    self.errors.push(SemanticError {
+                        span: span.clone(),
+                        kind: SemanticErrorKind::InvalidExpression,
+                    });
+                    return None;
+                }
+                self.lower_array_index(callee_ir, &expr.args[0])
+            }
+            TypeInfo::Type(type_id) => {
+                if expr.fallible || expr.args.len() != 1 {
+                    self.errors.push(SemanticError {
+                        span: span.clone(),
+                        kind: SemanticErrorKind::InvalidExpression,
+                    });
+                    return None;
+                }
+                self.lower_type_cast(span, &expr.args, type_id)
+            }
             _ => {
                 self.errors.push(SemanticError {
                     span: expr.callee.span.clone(),
@@ -834,34 +866,25 @@ impl<'a> SemanticAnalyzer<'a> {
         })
     }
 
-    fn lower_tuple_index(
-        &mut self,
-        expr: &CallExpr,
-        callee_ir: &Ir,
-        elements: &[TypeInfo],
-    ) -> Option<Ir> {
-        if expr.args.len() != 1 {
-            self.errors.push(SemanticError {
-                span: expr.callee.span.clone(),
-                kind: SemanticErrorKind::ArgCountMismatch {
-                    expected: 1,
-                    found: expr.args.len(),
-                },
-            });
-        }
+    fn lower_tuple_index(&mut self, tuple_ir: Ir, arg_expr: &Expression) -> Option<Ir> {
+        let arg_ir = self.lower_expr(arg_expr)?;
 
-        let arg = self.lower_expr(expr.args.first()?)?;
-        match arg.kind {
+        let elements = match &tuple_ir.ty {
+            TypeInfo::Tuple(elements) => elements,
+            _ => unreachable!(),
+        };
+
+        match arg_ir.kind {
             IrKind::Int(index) if index >= 0 && (index as usize) < elements.len() => Some(Ir {
+                ty: elements[index as usize].clone(),
                 kind: IrKind::IndexTuple {
-                    tuple: Box::new(callee_ir.clone()),
+                    tuple: Box::new(tuple_ir),
                     index: index as usize,
                 },
-                ty: elements[index as usize].clone(),
             }),
             IrKind::Int(index) => {
                 self.errors.push(SemanticError {
-                    span: expr.args[0].span.clone(),
+                    span: arg_expr.span.clone(),
                     kind: SemanticErrorKind::TupleIndexOutOfBounds {
                         index,
                         length: elements.len(),
@@ -871,11 +894,34 @@ impl<'a> SemanticAnalyzer<'a> {
             }
             _ => {
                 self.errors.push(SemanticError {
-                    span: expr.args[0].span.clone(),
+                    span: arg_expr.span.clone(),
                     kind: SemanticErrorKind::InvalidTupleIndex,
                 });
                 None
             }
+        }
+    }
+
+    fn lower_array_index(&mut self, array_ir: Ir, index: &Expression) -> Option<Ir> {
+        let index_ir = self.lower_expr(index)?;
+
+        if index_ir.ty == TypeInfo::Int {
+            Some(Ir {
+                ty: array_ir.ty.clone(),
+                kind: IrKind::IndexArray {
+                    array: array_ir.into(),
+                    index: index_ir.into(),
+                },
+            })
+        } else {
+            self.errors.push(SemanticError {
+                span: index.span.clone(),
+                kind: SemanticErrorKind::TypeMismatch {
+                    expected: TypeInfo::Int,
+                    found: index_ir.ty.clone(),
+                },
+            });
+            None
         }
     }
 

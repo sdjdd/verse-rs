@@ -29,6 +29,7 @@ pub enum IrKind {
     Tuple(Vec<Ir>),
     IndexTuple { tuple: Box<Ir>, index: usize },
     Array(Vec<Ir>),
+    IndexArray { array: Box<Ir>, index: Box<Ir> },
     Call(CallIr),
     Add((Box<Ir>, Box<Ir>)),
     Sub((Box<Ir>, Box<Ir>)),
@@ -53,7 +54,10 @@ pub enum IrKind {
 impl IrKind {
     pub fn is_fallible(&self) -> bool {
         match self {
-            IrKind::Cast { .. } | IrKind::Div(_) | IrKind::CompareChain(_) => true,
+            IrKind::Cast { .. }
+            | IrKind::Div(_)
+            | IrKind::CompareChain(_)
+            | IrKind::IndexArray { .. } => true,
 
             IrKind::LoadLocal { .. }
             | IrKind::LoadGlobal { .. }
@@ -80,10 +84,9 @@ impl IrKind {
                 a.kind.is_fallible() || b.kind.is_fallible()
             }
 
-            IrKind::Tuple(irs)
-            | IrKind::Array(irs)
-            | IrKind::Block(irs)
-            | IrKind::Concat(irs) => irs.iter().any(|ir| ir.kind.is_fallible()),
+            IrKind::Tuple(irs) | IrKind::Array(irs) | IrKind::Block(irs) | IrKind::Concat(irs) => {
+                irs.iter().any(|ir| ir.kind.is_fallible())
+            }
 
             IrKind::Option(v) => v.as_ref().is_some_and(|ir| ir.kind.is_fallible()),
             IrKind::If(e) => {
