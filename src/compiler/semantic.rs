@@ -1,5 +1,6 @@
 use ordermap::OrderSet;
 use std::collections::HashMap;
+use thiserror::Error;
 
 use crate::core::{
     PredefinedSymbols, Symbol, SymbolRegistry,
@@ -9,6 +10,63 @@ use crate::core::{
 use super::ast::*;
 use super::ir::*;
 use super::lexer::Span;
+
+pub struct SemanticError {
+    pub span: Span,
+    pub kind: SemanticErrorKind,
+}
+
+#[derive(Debug, Error)]
+pub enum SemanticErrorKind {
+    #[error("cannot find `{name}` in this scope")]
+    UndefinedName { name: String },
+
+    #[error("expected `{expected}`, found `{found}`")]
+    TypeMismatch { expected: TypeInfo, found: TypeInfo },
+
+    #[error("cannot apply unary operator `{op}` to type `{operand}`")]
+    InvalidUnaryOp { op: UnaryOp, operand: TypeInfo },
+
+    #[error("cannot {op} `{rhs}` to `{lhs}`")]
+    InvalidBinaryOp {
+        op: BinaryOp,
+        lhs: TypeInfo,
+        rhs: TypeInfo,
+    },
+
+    #[error("cannot assign twice to immutable variable `{name}`")]
+    ImmutableAssignment { name: String },
+
+    #[error("invalid left-hand side of assignment")]
+    InvalidAssignmentTarget,
+
+    #[error("expected function, found `{ty}`")]
+    NotCallable { ty: TypeInfo },
+
+    #[error("expected {expected} argument(s), found {found}")]
+    ArgCountMismatch { expected: usize, found: usize },
+
+    #[error("tuple index must be a non-negative integer literal")]
+    InvalidTupleIndex,
+
+    #[error("tuple index {index} out of bounds for tuple of length {length}")]
+    TupleIndexOutOfBounds { index: i64, length: usize },
+
+    #[error("expected a type, found a value")]
+    ExpectedTypeGotValue,
+
+    #[error("`break` is not allowed outside of a loop")]
+    BreakOutsideLoop,
+
+    #[error("invalid function effect")]
+    InvalidEffect,
+
+    #[error("fallible expression is not allowed in this context")]
+    UnexpectedFallibleExpr,
+
+    #[error("expected a fallible expression")]
+    ExpectedFallibleExpr,
+}
 
 #[derive(Debug, Clone)]
 pub struct Variable {
@@ -69,19 +127,20 @@ impl Scope {
 
 struct LoopInfo {}
 
-pub struct SemanticAnalyzer {
+pub struct SemanticAnalyzer<'a> {
     pub builtin_symbols: PredefinedSymbols,
     pub errors: Vec<SemanticError>,
 
     pub scopes: Vec<Scope>,
     pub types: TypeRegistry,
 
+    symbol_table: &'a SymbolRegistry,
     loop_stack: Vec<LoopInfo>,
     failure_contexts: u32,
 }
 
-impl SemanticAnalyzer {
-    pub fn new(symbol_table: &mut SymbolRegistry) -> Self {
+impl<'a> SemanticAnalyzer<'a> {
+    pub fn new(symbol_table: &'a mut SymbolRegistry) -> Self {
         let mut global_scope = Scope::new(false);
 
         let bs = PredefinedSymbols::install(symbol_table);
@@ -118,6 +177,7 @@ impl SemanticAnalyzer {
             builtin_symbols: bs,
             errors: vec![],
             types: TypeRegistry::default(),
+            symbol_table,
             loop_stack: vec![],
             failure_contexts: 0,
         }
@@ -211,8 +271,10 @@ impl SemanticAnalyzer {
 
     fn ensure_not_fallible(&mut self, span: Span) {
         if self.failure_contexts == 0 {
-            self.errors
-                .push(SemanticError::UnexpectedFallibleExpr { span })
+            self.errors.push(SemanticError {
+                span,
+                kind: SemanticErrorKind::UnexpectedFallibleExpr,
+            })
         }
     }
 
@@ -308,10 +370,12 @@ impl SemanticAnalyzer {
             binding_type = self.lower_type_expr(type_expr);
 
             if !self.is_assignable_to(&value_ir.ty, &binding_type) {
-                self.errors.push(SemanticError::TypeMismatch {
+                self.errors.push(SemanticError {
                     span: value.span.clone(),
-                    expected: binding_type.clone(),
-                    found: value_ir.ty.clone(),
+                    kind: SemanticErrorKind::TypeMismatch {
+                        expected: binding_type.clone(),
+                        found: value_ir.ty.clone(),
+                    },
                 })
             }
 
@@ -342,31 +406,40 @@ impl SemanticAnalyzer {
                 let var = match self.lookup(&id_expr.symbol) {
                     Some(var) => var,
                     None => {
-                        self.errors.push(SemanticError::UndefinedName {
+                        self.errors.push(SemanticError {
                             span: expr.lhs.span.clone(),
+                            kind: SemanticErrorKind::UndefinedName {
+                                name: self.symbol_table.lookup(id_expr.symbol).to_string(),
+                            },
                         });
                         return None;
                     }
                 };
 
                 if !self.is_assignable_to(&value.ty, &var.type_info) {
-                    self.errors.push(SemanticError::TypeMismatch {
+                    self.errors.push(SemanticError {
                         span: expr.rhs.span.clone(),
-                        expected: var.type_info.clone(),
-                        found: value.ty.clone(),
+                        kind: SemanticErrorKind::TypeMismatch {
+                            expected: var.type_info.clone(),
+                            found: value.ty.clone(),
+                        },
                     })
                 }
                 if !var.mutable {
-                    self.errors.push(SemanticError::ImmutableAssignment {
+                    self.errors.push(SemanticError {
                         span: expr.lhs.span.clone(),
+                        kind: SemanticErrorKind::ImmutableAssignment {
+                            name: self.symbol_table.lookup(id_expr.symbol).to_string(),
+                        },
                     })
                 }
 
                 Some(self.make_store_ir(&var, value))
             }
             _ => {
-                self.errors.push(SemanticError::InvalidAssignmentTarget {
+                self.errors.push(SemanticError {
                     span: expr.lhs.span.clone(),
+                    kind: SemanticErrorKind::InvalidAssignmentTarget,
                 });
                 None
             }
@@ -377,7 +450,12 @@ impl SemanticAnalyzer {
         if let Some(var) = self.lookup(&expr.symbol) {
             Some(self.make_load_ir(&var))
         } else {
-            self.errors.push(SemanticError::UndefinedName { span });
+            self.errors.push(SemanticError {
+                span,
+                kind: SemanticErrorKind::UndefinedName {
+                    name: self.symbol_table.lookup(expr.symbol).to_string(),
+                },
+            });
             None
         }
     }
@@ -463,10 +541,12 @@ impl SemanticAnalyzer {
         for (_, expr) in &expr.rest {
             let ir = self.lower_expr(expr)?;
             if ir.ty != head_ir.ty {
-                self.errors.push(SemanticError::TypeMismatch {
+                self.errors.push(SemanticError {
                     span: expr.span.clone(),
-                    expected: head_ir.ty.clone(),
-                    found: ir.ty.clone(),
+                    kind: SemanticErrorKind::TypeMismatch {
+                        expected: head_ir.ty.clone(),
+                        found: ir.ty.clone(),
+                    },
                 });
             }
             rest_irs.push(ir);
@@ -531,8 +611,9 @@ impl SemanticAnalyzer {
         let test_ir = test_ir?;
 
         if !test_ir.kind.is_fallible() {
-            self.errors.push(SemanticError::ExpectedFallibleExpr {
+            self.errors.push(SemanticError {
                 span: expr.test.span.clone(),
+                kind: SemanticErrorKind::ExpectedFallibleExpr,
             })
         }
 
@@ -576,8 +657,9 @@ impl SemanticAnalyzer {
 
     fn lower_break_expr(&mut self, expr: &Expression) -> Option<Ir> {
         if self.loop_stack.is_empty() {
-            self.errors.push(SemanticError::BreakOutsideLoop {
+            self.errors.push(SemanticError {
                 span: expr.span.clone(),
+                kind: SemanticErrorKind::BreakOutsideLoop,
             });
             return None;
         }
@@ -603,8 +685,9 @@ impl SemanticAnalyzer {
                 e if e == self.builtin_symbols.s_decides => {
                     effects.decides = true;
                 }
-                _ => self.errors.push(SemanticError::InvalidEffect {
+                _ => self.errors.push(SemanticError {
                     span: effect.span.clone(),
+                    kind: SemanticErrorKind::InvalidEffect,
                 }),
             }
         }
@@ -625,10 +708,12 @@ impl SemanticAnalyzer {
 
         if return_type != TypeInfo::Void {
             if !self.is_assignable_to(&body.ty, &return_type) {
-                self.errors.push(SemanticError::TypeMismatch {
+                self.errors.push(SemanticError {
                     span: expr.body.span.clone(),
-                    expected: return_type.clone(),
-                    found: body.ty.clone(),
+                    kind: SemanticErrorKind::TypeMismatch {
+                        expected: return_type.clone(),
+                        found: body.ty.clone(),
+                    },
                 })
             }
         }
@@ -664,10 +749,12 @@ impl SemanticAnalyzer {
         self.ensure_not_fallible(span.clone());
 
         if args.len() != 1 {
-            self.errors.push(SemanticError::ArgCountMismatch {
+            self.errors.push(SemanticError {
                 span,
-                expected: 1,
-                found: args.len(),
+                kind: SemanticErrorKind::ArgCountMismatch {
+                    expected: 1,
+                    found: args.len(),
+                },
             });
         }
 
@@ -695,9 +782,11 @@ impl SemanticAnalyzer {
             TypeInfo::Tuple(elements) => self.lower_tuple_index(expr, &callee_ir, elements),
             TypeInfo::Type(type_id) => self.lower_type_cast(span, &expr.args, type_id),
             _ => {
-                self.errors.push(SemanticError::NotCallable {
+                self.errors.push(SemanticError {
                     span: expr.callee.span.clone(),
-                    ty: callee_ir.ty.clone(),
+                    kind: SemanticErrorKind::NotCallable {
+                        ty: callee_ir.ty.clone(),
+                    },
                 });
                 None
             }
@@ -712,10 +801,12 @@ impl SemanticAnalyzer {
         ret: &Box<TypeInfo>,
     ) -> Option<Ir> {
         if params.len() != expr.args.len() {
-            self.errors.push(SemanticError::ArgCountMismatch {
+            self.errors.push(SemanticError {
                 span: expr.callee.span.clone(),
-                expected: params.len(),
-                found: expr.args.len(),
+                kind: SemanticErrorKind::ArgCountMismatch {
+                    expected: params.len(),
+                    found: expr.args.len(),
+                },
             })
         }
 
@@ -723,10 +814,12 @@ impl SemanticAnalyzer {
         for (param_type, arg) in params.iter().zip(expr.args.iter()) {
             let arg_ir = self.lower_expr(arg)?;
             if !self.is_assignable_to(&arg_ir.ty, param_type) {
-                self.errors.push(SemanticError::TypeMismatch {
+                self.errors.push(SemanticError {
                     span: arg.span.clone(),
-                    expected: param_type.clone(),
-                    found: arg_ir.ty.clone(),
+                    kind: SemanticErrorKind::TypeMismatch {
+                        expected: param_type.clone(),
+                        found: arg_ir.ty.clone(),
+                    },
                 })
             }
             arg_irs.push(arg_ir);
@@ -748,35 +841,38 @@ impl SemanticAnalyzer {
         elements: &[TypeInfo],
     ) -> Option<Ir> {
         if expr.args.len() != 1 {
-            self.errors.push(SemanticError::ArgCountMismatch {
+            self.errors.push(SemanticError {
                 span: expr.callee.span.clone(),
-                expected: 1,
-                found: expr.args.len(),
+                kind: SemanticErrorKind::ArgCountMismatch {
+                    expected: 1,
+                    found: expr.args.len(),
+                },
             });
         }
 
         let arg = self.lower_expr(expr.args.first()?)?;
         match arg.kind {
-            IrKind::Int(index) if index >= 0 && (index as usize) < elements.len() => {
-                Some(Ir {
-                    kind: IrKind::IndexTuple {
-                        tuple: Box::new(callee_ir.clone()),
-                        index: index as usize,
-                    },
-                    ty: elements[index as usize].clone(),
-                })
-            }
+            IrKind::Int(index) if index >= 0 && (index as usize) < elements.len() => Some(Ir {
+                kind: IrKind::IndexTuple {
+                    tuple: Box::new(callee_ir.clone()),
+                    index: index as usize,
+                },
+                ty: elements[index as usize].clone(),
+            }),
             IrKind::Int(index) => {
-                self.errors.push(SemanticError::TupleIndexOutOfBounds {
+                self.errors.push(SemanticError {
                     span: expr.args[0].span.clone(),
-                    index,
-                    length: elements.len(),
+                    kind: SemanticErrorKind::TupleIndexOutOfBounds {
+                        index,
+                        length: elements.len(),
+                    },
                 });
                 None
             }
             _ => {
-                self.errors.push(SemanticError::InvalidTupleIndex {
+                self.errors.push(SemanticError {
                     span: expr.args[0].span.clone(),
+                    kind: SemanticErrorKind::InvalidTupleIndex,
                 });
                 None
             }
@@ -787,31 +883,25 @@ impl SemanticAnalyzer {
         let lhs = self.lower_expr(&expr.lhs)?;
         let rhs = self.lower_expr(&expr.rhs)?;
 
-        if lhs.ty == TypeInfo::String {
-            return self.lower_string_binary(expr, lhs, rhs, span);
-        }
-
-        let type_id = if lhs.ty == rhs.ty {
-            lhs.ty.clone()
-        } else {
-            self.errors.push(SemanticError::TypeMismatch {
-                span: span.clone(),
-                expected: lhs.ty.clone(),
-                found: rhs.ty.clone(),
-            });
-            TypeInfo::Any
+        let ir_type = match (&lhs.ty, &rhs.ty) {
+            (TypeInfo::String, TypeInfo::String) => {
+                return self.lower_string_binary(expr, lhs, rhs, span);
+            }
+            (TypeInfo::Int, TypeInfo::Int) => TypeInfo::Int,
+            (TypeInfo::Float, TypeInfo::Float) => TypeInfo::Float,
+            (TypeInfo::Rational, TypeInfo::Rational) => TypeInfo::Rational,
+            _ => {
+                self.errors.push(SemanticError {
+                    span: expr.op_span.clone(),
+                    kind: SemanticErrorKind::InvalidBinaryOp {
+                        op: expr.op,
+                        lhs: lhs.ty,
+                        rhs: rhs.ty,
+                    },
+                });
+                return None;
+            }
         };
-
-        let numeric_types = [TypeInfo::Int, TypeInfo::Float, TypeInfo::Rational];
-        if !numeric_types.contains(&type_id) {
-            self.errors.push(SemanticError::InvalidBinaryOp {
-                span: expr.op_span.clone(),
-                op: expr.op,
-                lhs: lhs.ty,
-                rhs: rhs.ty,
-            });
-            return None;
-        }
 
         let kind = match expr.op {
             BinaryOp::Add => IrKind::Add((lhs.into(), rhs.into())),
@@ -820,7 +910,7 @@ impl SemanticAnalyzer {
             BinaryOp::Div => IrKind::Div((lhs.into(), rhs.into())),
         };
 
-        Some(Ir { kind, ty: type_id })
+        Some(Ir { kind, ty: ir_type })
     }
 
     fn lower_string_binary(
@@ -831,20 +921,24 @@ impl SemanticAnalyzer {
         span: Span,
     ) -> Option<Ir> {
         if expr.op != BinaryOp::Add {
-            self.errors.push(SemanticError::InvalidBinaryOp {
+            self.errors.push(SemanticError {
                 span: expr.op_span.clone(),
-                op: expr.op,
-                lhs: lhs.ty.clone(),
-                rhs: rhs.ty.clone(),
+                kind: SemanticErrorKind::InvalidBinaryOp {
+                    op: expr.op,
+                    lhs: lhs.ty.clone(),
+                    rhs: rhs.ty.clone(),
+                },
             });
             return None;
         }
 
         if rhs.ty != lhs.ty {
-            self.errors.push(SemanticError::TypeMismatch {
+            self.errors.push(SemanticError {
                 span,
-                expected: lhs.ty,
-                found: rhs.ty,
+                kind: SemanticErrorKind::TypeMismatch {
+                    expected: lhs.ty,
+                    found: rhs.ty,
+                },
             });
             return None;
         }
@@ -871,11 +965,12 @@ impl SemanticAnalyzer {
                     };
                     Some(Ir { ty, kind })
                 } else {
-                    self.errors.push(SemanticError::InvalidUnaryOp {
+                    self.errors.push(SemanticError {
                         span: expr.expr.span.clone(),
-                        op: expr.op,
-                        operand: ir.ty,
-                        expected: expected_types,
+                        kind: SemanticErrorKind::InvalidUnaryOp {
+                            op: expr.op,
+                            operand: ir.ty,
+                        },
                     });
                     None
                 }
@@ -887,11 +982,12 @@ impl SemanticAnalyzer {
                         kind: IrKind::Not(ir.into()),
                     })
                 } else {
-                    self.errors.push(SemanticError::InvalidUnaryOp {
+                    self.errors.push(SemanticError {
                         span: expr.expr.span.clone(),
-                        op: expr.op,
-                        operand: ir.ty,
-                        expected: vec![TypeInfo::Logic],
+                        kind: SemanticErrorKind::InvalidUnaryOp {
+                            op: expr.op,
+                            operand: ir.ty,
+                        },
                     });
                     None
                 }
@@ -906,14 +1002,18 @@ impl SemanticAnalyzer {
                     if let TypeInfo::Type(inner_type) = binding.type_info {
                         return *inner_type;
                     } else {
-                        self.errors.push(SemanticError::ExpectedTypeGotValue {
+                        self.errors.push(SemanticError {
                             span: expr.span.clone(),
+                            kind: SemanticErrorKind::ExpectedTypeGotValue,
                         });
                         return TypeInfo::Any;
                     }
                 }
-                self.errors.push(SemanticError::UndefinedName {
+                self.errors.push(SemanticError {
                     span: expr.span.clone(),
+                    kind: SemanticErrorKind::UndefinedName {
+                        name: self.symbol_table.lookup(*symbol).to_string(),
+                    },
                 });
                 TypeInfo::Any
             })(),
@@ -1001,10 +1101,12 @@ impl SemanticAnalyzer {
             if i > 0 {
                 let head = &irs[0];
                 if !self.is_assignable_to(&ir.ty, &head.ty) {
-                    self.errors.push(SemanticError::TypeMismatch {
+                    self.errors.push(SemanticError {
                         span: arg.span.clone(),
-                        expected: head.ty.clone(),
-                        found: ir.ty.clone(),
+                        kind: SemanticErrorKind::TypeMismatch {
+                            expected: head.ty.clone(),
+                            found: ir.ty.clone(),
+                        },
                     });
                 }
             }
@@ -1025,80 +1127,4 @@ fn flatten_add_ir(ir: Ir, out: &mut Vec<Ir>) {
     } else {
         out.push(ir);
     }
-}
-
-#[derive(Debug)]
-pub enum SemanticError {
-    UndefinedName {
-        span: Span,
-    },
-
-    TypeMismatch {
-        span: Span,
-        expected: TypeInfo,
-        found: TypeInfo,
-    },
-
-    InvalidUnaryOp {
-        span: Span,
-        op: UnaryOp,
-        operand: TypeInfo,
-        expected: Vec<TypeInfo>,
-    },
-
-    InvalidBinaryOp {
-        span: Span,
-        op: BinaryOp,
-        lhs: TypeInfo,
-        rhs: TypeInfo,
-    },
-
-    ImmutableAssignment {
-        span: Span,
-    },
-
-    InvalidAssignmentTarget {
-        span: Span,
-    },
-
-    NotCallable {
-        span: Span,
-        ty: TypeInfo,
-    },
-
-    ArgCountMismatch {
-        span: Span,
-        expected: usize,
-        found: usize,
-    },
-
-    InvalidTupleIndex {
-        span: Span,
-    },
-
-    TupleIndexOutOfBounds {
-        span: Span,
-        index: i64,
-        length: usize,
-    },
-
-    ExpectedTypeGotValue {
-        span: Span,
-    },
-
-    BreakOutsideLoop {
-        span: Span,
-    },
-
-    InvalidEffect {
-        span: Span,
-    },
-
-    UnexpectedFallibleExpr {
-        span: Span,
-    },
-
-    ExpectedFallibleExpr {
-        span: Span,
-    },
 }

@@ -1,4 +1,4 @@
-use derive_more::{Constructor, From};
+use derive_more::{Constructor, Display, From};
 use derive_new::new;
 
 use super::lexer::Span;
@@ -110,11 +110,15 @@ pub struct CallExpr {
     pub handle_failure: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
+    #[display("add")]
     Add,
+    #[display("subtract")]
     Sub,
+    #[display("multiply")]
     Mul,
+    #[display("divide")]
     Div,
 }
 
@@ -126,10 +130,13 @@ pub struct BinaryExpr {
     pub rhs: Box<Expression>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Display)]
 pub enum UnaryOp {
+    #[display("+")]
     Plus,
+    #[display("-")]
     Minus,
+    #[display("not")]
     Not,
 }
 

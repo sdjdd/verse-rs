@@ -5,33 +5,39 @@ use std::io::{self, Read};
 use verse::compiler::{
     compiler::Compiler, lexer::tokenize, parser::Parser, semantic::SemanticAnalyzer,
 };
-use verse::error::{report_parser_error, report_semantic_error};
+use verse::diagnostic::{report_parser_error, report_semantic_error};
 use verse::vm::Vm;
 use verse::vm::global_vars;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let source = if args.len() > 1 && &args[1] != "-" {
-        fs::read_to_string(&args[1]).unwrap()
+    let mut filename = env::args().skip(1).next().expect("no filename provided!");
+    let mut source = String::new();
+
+    if filename == "-" {
+        io::stdin().read_to_string(&mut source).unwrap();
+        filename = "stdin".to_string();
     } else {
-        let mut buffer = String::new();
-        io::stdin().read_to_string(&mut buffer).unwrap();
-        buffer
-    };
+        source = fs::read_to_string(&filename).unwrap();
+        filename = fs::canonicalize(filename)
+            .unwrap()
+            .into_os_string()
+            .into_string()
+            .unwrap();
+    }
 
     let tokens = tokenize(&source).unwrap();
     let mut parser = Parser::new(&source, &tokens);
 
     let program = parser.parse();
     for err in &parser.errors {
-        report_parser_error(err, &source);
+        report_parser_error(err, &source, &filename);
     }
     if parser.errors.is_empty() {
         let mut analyzer = SemanticAnalyzer::new(&mut parser.symbol_table);
 
         let root_irs = analyzer.analyze(&program.expressions);
         for err in &analyzer.errors {
-            report_semantic_error(&err, &source);
+            report_semantic_error(&err, &source, &filename);
         }
         if analyzer.errors.is_empty() {
             let mut compiler = Compiler::new();
