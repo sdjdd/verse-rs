@@ -94,6 +94,7 @@ impl Compiler {
             IrKind::Cast { ty, value } => self.compile_cast(ty, *value),
             IrKind::GetLength(ir) => self.compile_len(*ir),
             IrKind::Concat(irs) => self.compile_concat(irs),
+            IrKind::Unwrap(ir) => self.compile_unwrap(*ir),
         }
     }
 
@@ -446,5 +447,10 @@ impl Compiler {
     fn compile_len(&mut self, value: Ir) {
         self.compile_ir(value);
         self.append_op(Opcode::Len, 0);
+    }
+
+    fn compile_unwrap(&mut self, value: Ir) {
+        self.compile_ir(value);
+        self.append_op(Opcode::Unwrap, 0);
     }
 }

@@ -66,6 +66,7 @@ pub enum Opcode {
     Call,
     Cast,
     Len,
+    Unwrap,
 }
 
 #[derive(Clone, Copy)]
@@ -270,6 +271,7 @@ impl Vm {
             Opcode::Concat => self.exec_concat(),
             Opcode::Cast => self.exec_cast(),
             Opcode::Len => self.exec_len(),
+            Opcode::Unwrap => self.exec_unwrap(),
         }
     }
 
@@ -693,5 +695,18 @@ impl Vm {
             _ => unreachable!(),
         };
         self.op_stack.push(Value::Integer(len as i64));
+    }
+
+    fn exec_unwrap(&mut self) {
+        let inner = match self.op_stack.pop().unwrap() {
+            Value::Option { value, .. } => value,
+            _ => panic!("cannot unwrap non option value"),
+        };
+
+        if let Some(value) = inner {
+            self.op_stack.push(*value);
+        } else {
+            self.has_pending_failure = true;
+        }
     }
 }

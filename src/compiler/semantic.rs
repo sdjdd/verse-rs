@@ -340,6 +340,7 @@ impl<'a> SemanticAnalyzer<'a> {
             }
             ExprKind::Member(expr) => self.lower_member_expr(expr),
             ExprKind::Construct(cons_expr) => self.lower_construct_expr(cons_expr),
+            ExprKind::Query(e) => self.lower_query_expr(&expr.span, &e.expr),
         }
     }
 
@@ -1163,6 +1164,26 @@ impl<'a> SemanticAnalyzer<'a> {
             ty: TypeInfo::Array(irs.first().unwrap().ty.clone().into()),
             kind: IrKind::Array(irs),
         })
+    }
+
+    fn lower_query_expr(&mut self, span: &Span, expr: &Expression) -> Option<Ir> {
+        self.ensure_not_fallible(span);
+
+        let ir = self.lower_expr(expr)?;
+
+        match ir.ty.clone() {
+            TypeInfo::Option(inner_type) => Some(Ir {
+                ty: *inner_type,
+                kind: IrKind::Unwrap(ir.into()),
+            }),
+            _ => {
+                self.errors.push(SemanticError {
+                    span: span.clone(),
+                    kind: SemanticErrorKind::InvalidExpression,
+                });
+                None
+            }
+        }
     }
 }
 

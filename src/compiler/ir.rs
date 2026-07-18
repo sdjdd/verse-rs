@@ -49,6 +49,7 @@ pub enum IrKind {
     Cast { ty: TypeInfo, value: Box<Ir> },
     GetLength(Box<Ir>),
     Concat(Vec<Ir>),
+    Unwrap(Box<Ir>),
 }
 
 impl IrKind {
@@ -57,7 +58,8 @@ impl IrKind {
             IrKind::Cast { .. }
             | IrKind::Div(_)
             | IrKind::CompareChain(_)
-            | IrKind::IndexArray { .. } => true,
+            | IrKind::IndexArray { .. }
+            | IrKind::Unwrap(_) => true,
 
             IrKind::LoadLocal { .. }
             | IrKind::LoadGlobal { .. }

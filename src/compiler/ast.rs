@@ -37,6 +37,7 @@ pub enum ExprKind {
     Type(TypeExpr),
     Member(MemberExpr),
     Construct(ConstructExpr),
+    Query(QueryExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -225,14 +226,23 @@ pub struct FunctionExpr {
     pub body: Box<Expression>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct MemberExpr {
+    #[new(into)]
     pub object: Box<Expression>,
+    #[new(into)]
     pub property: Box<Expression>,
 }
 
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone, new)]
 pub struct ConstructExpr {
+    #[new(into)]
     pub callee: Box<Expression>,
     pub args: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, new)]
+pub struct QueryExpr {
+    #[new(into)]
+    pub expr: Box<Expression>,
 }

@@ -420,8 +420,53 @@ impl<'src> Parser<'src> {
                 }),
             })
         } else {
-            self.parse_call_expr()
+            self.parse_lhs_expr()
         }
+    }
+
+    fn parse_lhs_expr(&mut self) -> ParseResult<Expression> {
+        let mut expr = self.parse_primary_expr()?;
+
+        loop {
+            if matches!(self.peek(), Token::LParen | Token::LBracket | Token::LBrace) {
+                let end = match self.next() {
+                    Token::LParen => Token::RParen,
+                    Token::LBracket => Token::RBracket,
+                    Token::LBrace => Token::RBrace,
+                    _ => unreachable!(),
+                };
+                let args = self.parse_comma_separated_list(end, |p| p.parse_expression())?;
+                let span = expr.span.start..self.span().end;
+                let kind = if end == Token::RBrace {
+                    ExprKind::Construct(ConstructExpr::new(expr, args))
+                } else {
+                    ExprKind::Call(CallExpr {
+                        callee: expr.into(),
+                        args,
+                        fallible: end == Token::RBracket,
+                    })
+                };
+                expr = Expression::new(span, kind);
+                continue;
+            }
+
+            if self.consume_if(Token::Dot) {
+                let id_expr = self.parse_id_expr()?;
+                expr = Expression::new(
+                    expr.span.start..self.span().end,
+                    MemberExpr::new(expr, Box::new(id_expr.into())),
+                );
+                continue;
+            }
+
+            if self.consume_if(Token::Question) {
+                expr = Expression::new(expr.span.start..self.span().end, QueryExpr::new(expr));
+            }
+
+            break;
+        }
+
+        Ok(expr)
     }
 
     fn parse_if_expr(&mut self) -> ParseResult<Expression> {
@@ -582,38 +627,6 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_call_expr(&mut self) -> ParseResult<Expression> {
-        let mut callee = self.parse_lhs_expr()?;
-
-        loop {
-            let end = match self.peek() {
-                Token::LParen => Token::RParen,
-                Token::LBracket => Token::RBracket,
-                Token::LBrace => Token::RBrace,
-                _ => break,
-            };
-            self.next();
-
-            let args = self.parse_comma_separated_list(end, |p| p.parse_expression())?;
-
-            let span = callee.span.start..self.span().end;
-
-            let kind = if end == Token::RBrace {
-                ExprKind::Construct(ConstructExpr::new(callee.into(), args))
-            } else {
-                ExprKind::Call(CallExpr {
-                    callee: callee.into(),
-                    args,
-                    fallible: end == Token::RBracket,
-                })
-            };
-
-            callee = Expression { span, kind };
-        }
-
-        Ok(callee)
-    }
-
     fn looks_like_function_signature(&self) -> bool {
         if self.peek_n(1) != Token::LParen {
             return false;
@@ -668,23 +681,6 @@ impl<'src> Parser<'src> {
             start..body.span.end,
             FunctionExpr::new(name, params, effects, return_type, body),
         ))
-    }
-
-    fn parse_lhs_expr(&mut self) -> ParseResult<Expression> {
-        let mut expr = self.parse_primary_expr()?;
-
-        while self.consume_if(Token::Dot) {
-            let id_expr = self.parse_id_expr()?;
-            expr = Expression {
-                span: expr.span.start..self.span().end,
-                kind: ExprKind::Member(MemberExpr {
-                    object: Box::new(expr),
-                    property: Box::new(id_expr.into()),
-                }),
-            };
-        }
-
-        Ok(expr)
     }
 
     fn parse_primary_expr(&mut self) -> ParseResult {
