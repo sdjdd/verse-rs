@@ -6,6 +6,7 @@ use crate::core::{ConstId, Symbol};
 
 #[derive(Debug, Clone, new)]
 pub struct Expression {
+    pub id: u32,
     pub span: Span,
     #[new(into)]
     pub kind: ExprKind,
@@ -61,6 +62,7 @@ pub struct TypeExpr {
 
 #[derive(Debug, Clone, Constructor)]
 pub struct IdExpr {
+    pub id: u32,
     pub span: Span,
     pub symbol: Symbol,
 }
@@ -68,6 +70,7 @@ pub struct IdExpr {
 impl Into<Expression> for IdExpr {
     fn into(self) -> Expression {
         Expression {
+            id: self.id,
             span: self.span.clone(),
             kind: ExprKind::Id(self),
         }

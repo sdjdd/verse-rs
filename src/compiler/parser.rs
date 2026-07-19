@@ -33,6 +33,7 @@ pub struct Parser<'src> {
     tokens: &'src [(Token, Span)],
     pos: usize,
     current_token_span: Span,
+    next_expr_id: u32,
 
     pub symbol_table: SymbolRegistry,
     pub const_pool: ConstPool,
@@ -46,10 +47,17 @@ impl<'src> Parser<'src> {
             tokens,
             pos: 0,
             current_token_span: 0..0,
+            next_expr_id: 0,
             symbol_table: SymbolRegistry::new(),
             const_pool: ConstPool::new(),
             errors: Vec::new(),
         }
+    }
+
+    fn gen_expr_id(&mut self) -> u32 {
+        let id = self.next_expr_id;
+        self.next_expr_id += 1;
+        id
     }
 
     fn span(&self) -> Span {
@@ -166,10 +174,11 @@ impl<'src> Parser<'src> {
             Token::Break => self.parse_break_expr(),
             Token::Type | Token::Tuple => {
                 let type_expr = self.parse_type_expr()?;
-                Ok(Expression {
-                    span: type_expr.span.clone(),
-                    kind: ExprKind::Type(type_expr),
-                })
+                Ok(Expression::new(
+                    self.gen_expr_id(),
+                    type_expr.span.clone(),
+                    type_expr,
+                ))
             }
             _ => self.parse_compare_chain_expr(),
         }
@@ -271,6 +280,7 @@ impl<'src> Parser<'src> {
 
             let rhs = self.parse_expression()?;
             return Ok(Expression::new(
+                self.gen_expr_id(),
                 lhs.span.start..rhs.span.end,
                 DeclExpr::new(lhs, typ, rhs),
             ));
@@ -287,13 +297,14 @@ impl<'src> Parser<'src> {
         self.expect(Token::Eq)?;
         let rhs = self.parse_expression()?;
 
-        Ok(Expression {
-            span: start..rhs.span.end,
-            kind: ExprKind::Set(SetExpr {
+        Ok(Expression::new(
+            self.gen_expr_id(),
+            start..rhs.span.end,
+            SetExpr {
                 lhs: lhs.into(),
                 rhs: rhs.into(),
-            }),
-        })
+            },
+        ))
     }
 
     fn parse_var_decl_expr(&mut self) -> ParseResult<Expression> {
@@ -302,7 +313,7 @@ impl<'src> Parser<'src> {
 
         self.expect(Token::Id)?;
         let symbol = self.symbol_table.intern(self.slice());
-        let name = IdExpr::new(self.span(), symbol);
+        let name = IdExpr::new(self.gen_expr_id(), self.span(), symbol);
 
         self.expect(Token::Colon)?;
         let typ = self.parse_type_expr()?;
@@ -310,15 +321,15 @@ impl<'src> Parser<'src> {
         self.expect(Token::Eq)?;
         let expr = self.parse_expression()?;
 
-        Ok(Expression {
-            span: start..expr.span.end,
-            kind: VarDeclExpr {
+        Ok(Expression::new(
+            self.gen_expr_id(),
+            start..expr.span.end,
+            VarDeclExpr {
                 name,
                 typ,
                 expr: expr.into(),
-            }
-            .into(),
-        })
+            },
+        ))
     }
 
     fn parse_compare_chain_expr(&mut self) -> ParseResult<Expression> {
@@ -340,6 +351,7 @@ impl<'src> Parser<'src> {
         }
         Ok(if let Some((_, last)) = rest.last() {
             Expression::new(
+                self.gen_expr_id(),
                 head.span.start..last.span.end,
                 CompareChainExpr::new(head, rest),
             )
@@ -359,15 +371,16 @@ impl<'src> Parser<'src> {
             self.next();
             let op_span = self.span();
             let rhs = self.parse_multiplicative_expr()?;
-            lhs = Expression {
-                span: lhs.span.start..rhs.span.end,
-                kind: ExprKind::Binary(BinaryExpr {
+            lhs = Expression::new(
+                self.gen_expr_id(),
+                lhs.span.start..rhs.span.end,
+                BinaryExpr {
                     op,
                     op_span,
                     lhs: lhs.into(),
                     rhs: rhs.into(),
-                }),
-            }
+                },
+            )
         }
         Ok(lhs)
     }
@@ -383,15 +396,16 @@ impl<'src> Parser<'src> {
             self.next();
             let op_span = self.span();
             let rhs = self.parse_unary_expr()?;
-            lhs = Expression {
-                span: lhs.span.start..rhs.span.end,
-                kind: ExprKind::Binary(BinaryExpr {
+            lhs = Expression::new(
+                self.gen_expr_id(),
+                lhs.span.start..rhs.span.end,
+                BinaryExpr {
                     op,
                     op_span,
                     lhs: lhs.into(),
                     rhs: rhs.into(),
-                }),
-            }
+                },
+            )
         }
         Ok(lhs)
     }
@@ -408,13 +422,14 @@ impl<'src> Parser<'src> {
             self.next();
             let start = self.span().start;
             let expr = self.parse_unary_expr()?;
-            Ok(Expression {
-                span: start..expr.span.end,
-                kind: ExprKind::Unary(UnaryExpr {
+            Ok(Expression::new(
+                self.gen_expr_id(),
+                start..expr.span.end,
+                UnaryExpr {
                     op,
                     expr: expr.into(),
-                }),
-            })
+                },
+            ))
         } else {
             self.parse_lhs_expr()
         }
@@ -442,13 +457,14 @@ impl<'src> Parser<'src> {
                         fallible: end == Token::RBracket,
                     })
                 };
-                expr = Expression::new(span, kind);
+                expr = Expression::new(self.gen_expr_id(), span, kind);
                 continue;
             }
 
             if self.consume_if(Token::Dot) {
                 let id_expr = self.parse_id_expr()?;
                 expr = Expression::new(
+                    self.gen_expr_id(),
                     expr.span.start..self.span().end,
                     MemberExpr::new(expr, Box::new(id_expr.into())),
                 );
@@ -456,7 +472,11 @@ impl<'src> Parser<'src> {
             }
 
             if self.consume_if(Token::Question) {
-                expr = Expression::new(expr.span.start..self.span().end, QueryExpr::new(expr));
+                expr = Expression::new(
+                    self.gen_expr_id(),
+                    expr.span.start..self.span().end,
+                    QueryExpr::new(expr),
+                );
             }
 
             break;
@@ -541,6 +561,7 @@ impl<'src> Parser<'src> {
             .unwrap_or(consequent.span.end);
 
         Ok(Expression::new(
+            self.gen_expr_id(),
             start..end,
             IfExpr::new(test, consequent, alternate),
         ))
@@ -552,18 +573,20 @@ impl<'src> Parser<'src> {
         self.expect(Token::Colon)?;
         self.expect(Token::Newline)?;
         let body = self.parse_block_expr()?;
-        Ok(Expression {
-            span: start..body.span.end,
-            kind: ExprKind::Loop(body.into()),
-        })
+        Ok(Expression::new(
+            self.gen_expr_id(),
+            start..body.span.end,
+            ExprKind::Loop(body.into()),
+        ))
     }
 
     fn parse_break_expr(&mut self) -> ParseResult {
         self.expect(Token::Break)?;
-        Ok(Expression {
-            span: self.span().clone(),
-            kind: ExprKind::Break,
-        })
+        Ok(Expression::new(
+            self.gen_expr_id(),
+            self.span().clone(),
+            ExprKind::Break,
+        ))
     }
 
     fn parse_block_expr(&mut self) -> ParseResult<Expression> {
@@ -589,7 +612,11 @@ impl<'src> Parser<'src> {
             }
             self.skip_newlines();
         }
-        Ok(Expression::new(start..end, BlockExpr::new(body)))
+        Ok(Expression::new(
+            self.gen_expr_id(),
+            start..end,
+            BlockExpr::new(body),
+        ))
     }
 
     fn parse_comma_separated_list<P, E>(&mut self, end: Token, parse: P) -> ParseResult<Vec<E>>
@@ -672,6 +699,7 @@ impl<'src> Parser<'src> {
         };
 
         Ok(Expression::new(
+            self.gen_expr_id(),
             start..body.span.end,
             FunctionExpr::new(name, params, effects, return_type, body),
         ))
@@ -689,7 +717,7 @@ impl<'src> Parser<'src> {
 
     fn parse_id_expr(&mut self) -> ParseResult<IdExpr> {
         self.expect(Token::Id)?;
-        Ok(IdExpr::new(self.span(), self.symbol()))
+        Ok(IdExpr::new(self.gen_expr_id(), self.span(), self.symbol()))
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
@@ -732,7 +760,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::UnexpectedToken { token, span });
             }
         };
-        Ok(Expression::new(self.span(), expr))
+        Ok(Expression::new(self.gen_expr_id(), self.span(), expr))
     }
 
     fn parse_integer_literal(&mut self) -> ParseResult<ExprKind> {
@@ -815,6 +843,7 @@ impl<'src> Parser<'src> {
             self.escape_string_literal(&src[1..src.len() - 1]),
         ));
         Ok(Expression::new(
+            self.gen_expr_id(),
             start..self.span().end,
             TemplateExpression::new(elements),
         ))
@@ -849,10 +878,11 @@ impl<'src> Parser<'src> {
                     elements.push(self.parse_expression()?);
                     self.consume_if(Token::Comma);
                 }
-                Ok(Expression {
-                    span: start..self.span().end,
-                    kind: ExprKind::Tuple(TupleExpr { elements }),
-                })
+                Ok(Expression::new(
+                    self.gen_expr_id(),
+                    start..self.span().end,
+                    ExprKind::Tuple(TupleExpr { elements }),
+                ))
             }
             Token::RParen => Ok(expr),
             _ => Err(self.unexpected_error()),
