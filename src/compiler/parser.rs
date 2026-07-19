@@ -89,7 +89,7 @@ impl<'src> Parser<'src> {
     fn unexpected_error(&self) -> ParseError {
         ParseError::UnexpectedToken {
             token: self.tokens[self.pos].0,
-            span: self.span(),
+            span: self.tokens[self.pos].1.clone(),
         }
     }
 
@@ -98,10 +98,7 @@ impl<'src> Parser<'src> {
         if token == found {
             Ok(())
         } else {
-            Err(ParseError::UnexpectedToken {
-                token: found,
-                span: self.span(),
-            })
+            Err(self.unexpected_error())
         }
     }
 
@@ -164,6 +161,7 @@ impl<'src> Parser<'src> {
             Token::Set => self.parse_set_expr(),
             Token::Var => self.parse_var_decl_expr(),
             Token::Id if self.looks_like_function_signature() => self.parse_function_expr(),
+            Token::Id if self.peek_n(1) == Token::Colon => self.parse_decl_expr(),
             Token::Loop => self.parse_loop_expr(),
             Token::Break => self.parse_break_expr(),
             Token::Type | Token::Tuple => {
@@ -173,7 +171,7 @@ impl<'src> Parser<'src> {
                     kind: ExprKind::Type(type_expr),
                 })
             }
-            _ => self.parse_decl_expr(),
+            _ => self.parse_compare_chain_expr(),
         }
     }
 
@@ -260,27 +258,25 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_decl_expr(&mut self) -> ParseResult<Expression> {
-        let mut lhs = self.parse_compare_chain_expr()?;
+        let lhs = self.parse_id_expr()?;
 
-        if let ExprKind::Id(id_expr) = &lhs.kind {
-            if self.consume_if(Token::Colon) {
-                let typ = if self.consume_if(Token::Eq) {
-                    None
-                } else {
-                    let typ = self.parse_type_expr()?;
-                    self.expect(Token::Eq)?;
-                    Some(typ)
-                };
+        if self.consume_if(Token::Colon) {
+            let typ = if self.consume_if(Token::Eq) {
+                None
+            } else {
+                let typ = self.parse_type_expr()?;
+                self.expect(Token::Eq)?;
+                Some(typ)
+            };
 
-                let rhs = self.parse_expression()?;
-                lhs = Expression::new(
-                    lhs.span.start..rhs.span.end,
-                    DeclExpr::new(id_expr.symbol, typ, rhs),
-                )
-            }
+            let rhs = self.parse_expression()?;
+            return Ok(Expression::new(
+                lhs.span.start..rhs.span.end,
+                DeclExpr::new(lhs, typ, rhs),
+            ));
         }
 
-        Ok(lhs)
+        Ok(lhs.into())
     }
 
     fn parse_set_expr(&mut self) -> ParseResult<Expression> {
@@ -610,11 +606,9 @@ impl<'src> Parser<'src> {
                 break;
             }
             if self.peek() != end {
+                let err = self.unexpected_error();
                 self.synchronize_to(end);
-                return Err(ParseError::UnexpectedToken {
-                    token: self.peek(),
-                    span: self.span(),
-                });
+                return Err(err);
             }
             self.next();
         }

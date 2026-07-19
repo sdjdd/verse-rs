@@ -29,6 +29,22 @@ pub enum TypeInfo {
     Type(Box<TypeInfo>),
 
     Bottom,
+
+    Unknown,
+}
+
+impl TypeInfo {
+    pub fn is_complete(&self) -> bool {
+        match self {
+            TypeInfo::Unknown => false,
+            TypeInfo::Option(t) | TypeInfo::Array(t) | TypeInfo::Type(t) => t.is_complete(),
+            TypeInfo::Tuple(ts) => ts.iter().all(|t| t.is_complete()),
+            TypeInfo::Function { params, ret } => {
+                params.iter().all(|t| t.is_complete()) && ret.is_complete()
+            }
+            _ => true,
+        }
+    }
 }
 
 impl Display for TypeInfo {
@@ -69,6 +85,7 @@ impl Display for TypeInfo {
             }
             TypeInfo::Type(inner) => write!(f, "{inner}"),
             TypeInfo::Bottom => write!(f, "bottom"),
+            TypeInfo::Unknown => write!(f, "unknown"),
         }
     }
 }

@@ -69,6 +69,9 @@ pub enum SemanticErrorKind {
 
     #[error("invalid expression")]
     InvalidExpression,
+
+    #[error("need type annotation")]
+    TypeAnnotationRequired,
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +143,7 @@ pub struct SemanticAnalyzer<'a> {
     symbol_table: &'a SymbolRegistry,
     loop_stack: Vec<LoopInfo>,
     failure_contexts: u32,
+    expected_type: Vec<TypeInfo>,
 }
 
 impl<'a> SemanticAnalyzer<'a> {
@@ -183,6 +187,7 @@ impl<'a> SemanticAnalyzer<'a> {
             symbol_table,
             loop_stack: vec![],
             failure_contexts: 0,
+            expected_type: vec![],
         }
     }
 
@@ -243,19 +248,6 @@ impl<'a> SemanticAnalyzer<'a> {
         parent_index.unwrap()
     }
 
-    fn is_assignable_to(&self, from: &TypeInfo, to: &TypeInfo) -> bool {
-        if from == to || to == &TypeInfo::Any {
-            return true;
-        }
-
-        match (from, to) {
-            (TypeInfo::True | TypeInfo::False, TypeInfo::Logic) => true,
-            (TypeInfo::False, TypeInfo::Option(_)) => true,
-            (TypeInfo::Option(from), TypeInfo::Option(to)) => self.is_assignable_to(from, to),
-            _ => false,
-        }
-    }
-
     fn push_loop(&mut self) {
         self.loop_stack.push(LoopInfo {});
     }
@@ -293,15 +285,9 @@ impl<'a> SemanticAnalyzer<'a> {
 
     pub fn lower_expr(&mut self, expr: &Expression) -> Option<Ir> {
         match &expr.kind {
-            ExprKind::Integer(v) => Some(Ir {
-                kind: IrKind::Int(*v),
-                ty: TypeInfo::Int,
-            }),
-            ExprKind::Float(v) => Some(Ir {
-                kind: IrKind::Float(*v),
-                ty: TypeInfo::Float,
-            }),
-            ExprKind::Logic(v) => Some(self.lower_logic_expr(*v)),
+            ExprKind::Integer(v) => self.lower_int(&expr.span, *v).into(),
+            ExprKind::Float(v) => self.lower_float(&expr.span, *v).into(),
+            ExprKind::Logic(v) => self.lower_logic_expr(&expr.span, *v).into(),
             ExprKind::Char(v) => Some(Ir {
                 kind: IrKind::Char(*v),
                 ty: TypeInfo::Char,
@@ -314,10 +300,8 @@ impl<'a> SemanticAnalyzer<'a> {
                 kind: IrKind::String(*v),
                 ty: TypeInfo::String,
             }),
-            ExprKind::Decl(e) => self.lower_decl_expr(e.target, e.typ.as_ref(), &e.value, false),
-            ExprKind::VarDecl(e) => {
-                self.lower_decl_expr(e.name.symbol, Some(&e.typ), &e.expr, true)
-            }
+            ExprKind::Decl(e) => self.lower_decl_expr(&e.target, e.typ.as_ref(), &e.value, false),
+            ExprKind::VarDecl(e) => self.lower_decl_expr(&e.name, Some(&e.typ), &e.expr, true),
             ExprKind::Set(e) => self.lower_set_expr(e),
             ExprKind::Id(e) => self.lower_id_expr(expr.span.clone(), e),
             ExprKind::Block(e) => self.lower_block_expr(e),
@@ -328,7 +312,7 @@ impl<'a> SemanticAnalyzer<'a> {
             ExprKind::Loop(body) => self.lower_loop_expr(body),
             ExprKind::Break => self.lower_break_expr(expr),
             ExprKind::Func(e) => self.lower_func_expr(e),
-            ExprKind::Call(e) => self.lower_call_expr(expr.span.clone(), e),
+            ExprKind::Call(e) => self.lower_call_expr(&expr.span, e),
             ExprKind::Binary(e) => self.lower_binary_expr(expr.span.clone(), e),
             ExprKind::Unary(e) => self.lower_unary_expr(e),
             ExprKind::Type(e) => {
@@ -339,72 +323,111 @@ impl<'a> SemanticAnalyzer<'a> {
                 })
             }
             ExprKind::Member(expr) => self.lower_member_expr(expr),
-            ExprKind::Construct(cons_expr) => self.lower_construct_expr(cons_expr),
+            ExprKind::Construct(cons_expr) => self.lower_construct_expr(&expr.span, cons_expr),
             ExprKind::Query(e) => self.lower_query_expr(&expr.span, &e.expr),
         }
     }
 
-    fn lower_logic_expr(&mut self, value: bool) -> Ir {
-        if value {
+    fn try_to_make_type_match(&self, src: &mut TypeInfo, dst: &TypeInfo) -> bool {
+        if dst == &TypeInfo::Any || dst == &TypeInfo::Unknown || src == dst {
+            return true;
+        }
+
+        match (src, dst) {
+            (src @ (TypeInfo::True | TypeInfo::False), TypeInfo::Logic)
+            | (src @ TypeInfo::False, TypeInfo::Option(_)) => {
+                *src = dst.clone();
+            }
+            (TypeInfo::Option(a), TypeInfo::Option(b)) => return self.try_to_make_type_match(a, b),
+            _ => return false,
+        }
+
+        true
+    }
+
+    fn ensure_type_match(&mut self, span: &Span, found: &mut TypeInfo) {
+        if let Some(expected_type) = self.expected_type.pop() {
+            if !self.try_to_make_type_match(found, &expected_type) {
+                self.errors.push(SemanticError {
+                    span: span.clone(),
+                    kind: SemanticErrorKind::TypeMismatch {
+                        expected: expected_type,
+                        found: found.clone(),
+                    },
+                });
+            }
+        }
+    }
+
+    fn lower_int(&mut self, span: &Span, value: i64) -> Ir {
+        let mut ir = Ir {
+            kind: IrKind::Int(value),
+            ty: TypeInfo::Int,
+        };
+        self.ensure_type_match(span, &mut ir.ty);
+        ir
+    }
+
+    fn lower_float(&mut self, span: &Span, value: f64) -> Ir {
+        let mut ir = Ir {
+            kind: IrKind::Float(value),
+            ty: TypeInfo::Float,
+        };
+        self.ensure_type_match(span, &mut ir.ty);
+        ir
+    }
+
+    fn lower_logic_expr(&mut self, span: &Span, value: bool) -> Ir {
+        let mut ir = if value {
             Ir {
                 kind: IrKind::Logic(value),
-                ty: TypeInfo::Logic,
+                ty: TypeInfo::True,
             }
         } else {
             Ir {
                 kind: IrKind::Logic(value),
                 ty: TypeInfo::False,
             }
-        }
+        };
+        self.ensure_type_match(span, &mut ir.ty);
+        ir
     }
 
     fn lower_decl_expr(
         &mut self,
-        name: Symbol,
+        name: &IdExpr,
         ty: Option<&TypeExpr>,
         value: &Expression,
         mutable: bool,
     ) -> Option<Ir> {
-        let mut value_ir = self.lower_expr(value)?;
-        let mut binding_type = value_ir.ty.clone();
+        let binding_type = ty.map(|type_expr| self.lower_type_expr(type_expr));
 
-        if let Some(type_expr) = ty
-            && !matches!(type_expr.kind, TypeExprKind::Type)
-        {
-            binding_type = self.lower_type_expr(type_expr);
-
-            if !self.is_assignable_to(&value_ir.ty, &binding_type) {
-                self.errors.push(SemanticError {
-                    span: value.span.clone(),
-                    kind: SemanticErrorKind::TypeMismatch {
-                        expected: binding_type.clone(),
-                        found: value_ir.ty.clone(),
-                    },
-                })
-            }
-
-            if matches!(type_expr.kind, TypeExprKind::Option(_)) && value_ir.ty == TypeInfo::False {
-                value_ir = Ir {
-                    kind: IrKind::Option(None),
-                    ty: binding_type.clone(),
-                }
-            }
+        if let Some(binding_type) = &binding_type {
+            self.expected_type.push(binding_type.clone());
         }
 
-        let slot = self.declare(name, binding_type.clone(), mutable);
+        let value_ir = self.lower_expr(value)?;
+
+        if binding_type.is_none() && !value_ir.ty.is_complete() {
+            self.errors.push(SemanticError {
+                span: name.span.clone(),
+                kind: SemanticErrorKind::TypeAnnotationRequired,
+            })
+        }
+
+        let binding_type = binding_type.unwrap_or_else(|| value_ir.ty.clone());
+        let slot = self.declare(name.symbol, binding_type.clone(), mutable);
 
         Some(Ir {
+            ty: binding_type,
             kind: IrKind::StoreLocal {
                 slot,
                 value: Box::new(value_ir),
             },
-            ty: binding_type,
         })
     }
 
     fn lower_set_expr(&mut self, expr: &SetExpr) -> Option<Ir> {
-        let value = self.lower_expr(&expr.rhs)?;
-
         match &expr.lhs.kind {
             ExprKind::Id(id_expr) => {
                 let var = match self.lookup(&id_expr.symbol) {
@@ -420,15 +443,6 @@ impl<'a> SemanticAnalyzer<'a> {
                     }
                 };
 
-                if !self.is_assignable_to(&value.ty, &var.type_info) {
-                    self.errors.push(SemanticError {
-                        span: expr.rhs.span.clone(),
-                        kind: SemanticErrorKind::TypeMismatch {
-                            expected: var.type_info.clone(),
-                            found: value.ty.clone(),
-                        },
-                    })
-                }
                 if !var.mutable {
                     self.errors.push(SemanticError {
                         span: expr.lhs.span.clone(),
@@ -438,6 +452,8 @@ impl<'a> SemanticAnalyzer<'a> {
                     })
                 }
 
+                self.expected_type.push(var.type_info.clone());
+                let value = self.lower_expr(&expr.rhs)?;
                 Some(self.make_store_ir(&var, value))
             }
             _ => {
@@ -452,7 +468,9 @@ impl<'a> SemanticAnalyzer<'a> {
 
     fn lower_id_expr(&mut self, span: Span, expr: &IdExpr) -> Option<Ir> {
         if let Some(var) = self.lookup(&expr.symbol) {
-            Some(self.make_load_ir(&var))
+            let mut ir = self.make_load_ir(&var);
+            self.ensure_type_match(&span, &mut ir.ty);
+            Some(ir)
         } else {
             self.errors.push(SemanticError {
                 span,
@@ -488,37 +506,42 @@ impl<'a> SemanticAnalyzer<'a> {
         let ty = var.type_info.clone();
         if var.is_global {
             Ir {
+                ty,
                 kind: IrKind::StoreGlobal {
                     slot: var.slot,
                     value: Box::new(value),
                 },
-                ty,
             }
         } else if var.is_upvalue {
             Ir {
+                ty,
                 kind: IrKind::StoreUpvalue {
                     index: self.capture(var.scope_index, var.slot),
                     value: Box::new(value),
                 },
-                ty,
             }
         } else {
             Ir {
+                ty,
                 kind: IrKind::StoreLocal {
                     slot: var.slot,
                     value: Box::new(value),
                 },
-                ty,
             }
         }
     }
 
     fn lower_block_expr(&mut self, expr: &BlockExpr) -> Option<Ir> {
-        let body: Vec<_> = expr.body.iter().map(|e| self.lower_expr(e)).collect();
+        let mut body = Vec::with_capacity(expr.body.len());
 
-        if let Some(last_ir) = body.last()
-            && last_ir.is_none()
-        {
+        for (i, e) in expr.body.iter().enumerate() {
+            if i < expr.body.len() - 1 {
+                self.expected_type.push(TypeInfo::Any);
+            }
+            body.push(self.lower_expr(e));
+        }
+
+        if body.last().is_some_and(|ir| ir.is_none()) {
             return None;
         }
 
@@ -704,23 +727,17 @@ impl<'a> SemanticAnalyzer<'a> {
             param_slots.push(slot);
         }
 
+        if return_type == TypeInfo::Void {
+            self.expected_type.push(TypeInfo::Any);
+        } else {
+            self.expected_type.push(return_type.clone());
+        }
+
         let body = self.lower_expr(&expr.body);
 
         let scope = self.pop_scope();
 
         let body = body?;
-
-        if return_type != TypeInfo::Void {
-            if !self.is_assignable_to(&body.ty, &return_type) {
-                self.errors.push(SemanticError {
-                    span: expr.body.span.clone(),
-                    kind: SemanticErrorKind::TypeMismatch {
-                        expected: return_type.clone(),
-                        found: body.ty.clone(),
-                    },
-                })
-            }
-        }
 
         let return_void = return_type == TypeInfo::Void;
         let type_info = TypeInfo::Function {
@@ -746,15 +763,15 @@ impl<'a> SemanticAnalyzer<'a> {
 
     fn lower_type_cast(
         &mut self,
-        span: Span,
+        span: &Span,
         args: &[Expression],
         type_info: &TypeInfo,
     ) -> Option<Ir> {
-        self.ensure_not_fallible(&span);
+        self.ensure_not_fallible(span);
 
         if args.len() != 1 {
             self.errors.push(SemanticError {
-                span,
+                span: span.clone(),
                 kind: SemanticErrorKind::ArgCountMismatch {
                     expected: 1,
                     found: args.len(),
@@ -776,12 +793,13 @@ impl<'a> SemanticAnalyzer<'a> {
         }
     }
 
-    fn lower_call_expr(&mut self, span: Span, expr: &CallExpr) -> Option<Ir> {
+    fn lower_call_expr(&mut self, span: &Span, expr: &CallExpr) -> Option<Ir> {
+        self.expected_type.push(TypeInfo::Any);
         let callee_ir = self.lower_expr(&expr.callee)?;
 
         match &callee_ir.ty {
             TypeInfo::Function { params, ret } => {
-                self.lower_function_call(expr, &callee_ir, params, ret)
+                self.lower_function_call(span, expr, &callee_ir, params, ret)
             }
             TypeInfo::Tuple(_) => {
                 if expr.fallible || expr.args.len() != 1 {
@@ -828,6 +846,7 @@ impl<'a> SemanticAnalyzer<'a> {
 
     fn lower_function_call(
         &mut self,
+        span: &Span,
         expr: &CallExpr,
         callee_ir: &Ir,
         params: &[TypeInfo],
@@ -843,28 +862,21 @@ impl<'a> SemanticAnalyzer<'a> {
             })
         }
 
-        let mut arg_irs = vec![];
+        let mut arg_irs = Vec::with_capacity(params.len());
         for (param_type, arg) in params.iter().zip(expr.args.iter()) {
-            let arg_ir = self.lower_expr(arg)?;
-            if !self.is_assignable_to(&arg_ir.ty, param_type) {
-                self.errors.push(SemanticError {
-                    span: arg.span.clone(),
-                    kind: SemanticErrorKind::TypeMismatch {
-                        expected: param_type.clone(),
-                        found: arg_ir.ty.clone(),
-                    },
-                })
-            }
-            arg_irs.push(arg_ir);
+            self.expected_type.push(param_type.clone());
+            arg_irs.push(self.lower_expr(arg));
         }
 
-        Some(Ir {
+        let mut ir = Ir {
+            ty: *ret.clone(),
             kind: IrKind::Call(CallIr {
                 callee: Box::new(callee_ir.clone()),
-                args: arg_irs,
+                args: arg_irs.into_iter().flatten().collect(),
             }),
-            ty: *ret.clone(),
-        })
+        };
+        self.ensure_type_match(span, &mut ir.ty);
+        Some(ir)
     }
 
     fn lower_tuple_index(&mut self, tuple_ir: Ir, arg_expr: &Expression) -> Option<Ir> {
@@ -1113,10 +1125,10 @@ impl<'a> SemanticAnalyzer<'a> {
         None
     }
 
-    fn lower_construct_expr(&mut self, cons_expr: &ConstructExpr) -> Option<Ir> {
+    fn lower_construct_expr(&mut self, span: &Span, cons_expr: &ConstructExpr) -> Option<Ir> {
         if let ExprKind::Id(id_expr) = &cons_expr.callee.kind {
             if id_expr.symbol == self.builtin_symbols.s_option {
-                return self.lower_construct_option(cons_expr);
+                return self.lower_construct_option(span, cons_expr);
             }
             if id_expr.symbol == self.builtin_symbols.s_array {
                 return self.lower_construct_array(cons_expr);
@@ -1126,42 +1138,66 @@ impl<'a> SemanticAnalyzer<'a> {
         todo!()
     }
 
-    fn lower_construct_option(&mut self, cons_expr: &ConstructExpr) -> Option<Ir> {
-        if let Some(value) = cons_expr.args.first() {
-            let value = self.lower_expr(value)?;
-            return Some(Ir {
-                ty: TypeInfo::Option(value.ty.clone().into()),
-                kind: IrKind::Option(Some(value.into())),
+    fn lower_construct_option(&mut self, span: &Span, cons_expr: &ConstructExpr) -> Option<Ir> {
+        if cons_expr.args.len() == 1 {
+            if let Some(expected_type) = self.expected_type.pop() {
+                if let TypeInfo::Option(inner_type) = expected_type {
+                    self.expected_type.push(TypeInfo::Any);
+                    self.expected_type.push(*inner_type.clone());
+                } else {
+                    self.expected_type.push(expected_type);
+                    self.expected_type.push(TypeInfo::Any);
+                }
+            }
+
+            let value_ir = self.lower_expr(&cons_expr.args[0])?;
+            let mut value_ty = value_ir.ty.clone();
+
+            if value_ty == TypeInfo::False {
+                value_ty = TypeInfo::Unknown;
+            }
+
+            let mut ir = Ir {
+                ty: TypeInfo::Option(value_ty.into()),
+                kind: IrKind::Option(Some(value_ir.into())),
+            };
+
+            self.ensure_type_match(span, &mut ir.ty);
+
+            Some(ir)
+        } else {
+            self.errors.push(SemanticError {
+                span: span.clone(),
+                kind: SemanticErrorKind::InvalidExpression,
             });
+            None
         }
-        None
     }
 
     fn lower_construct_array(&mut self, cons_expr: &ConstructExpr) -> Option<Ir> {
-        if cons_expr.args.is_empty() {
-            todo!();
+        let mut expected_item_type = TypeInfo::Unknown;
+
+        if let Some(expected_type) = self.expected_type.pop() {
+            if let TypeInfo::Array(inner_type) = expected_type {
+                self.expected_type.push(TypeInfo::Any);
+                expected_item_type = *inner_type.clone();
+            } else {
+                self.expected_type.push(expected_type);
+            }
+            self.expected_type.push(expected_item_type.clone());
         }
 
-        let mut irs: Vec<Ir> = vec![];
+        let mut irs: Vec<Ir> = Vec::with_capacity(cons_expr.args.len());
         for (i, arg) in cons_expr.args.iter().enumerate() {
-            let ir = self.lower_expr(arg)?;
-            if i > 0 {
-                let head = &irs[0];
-                if !self.is_assignable_to(&ir.ty, &head.ty) {
-                    self.errors.push(SemanticError {
-                        span: arg.span.clone(),
-                        kind: SemanticErrorKind::TypeMismatch {
-                            expected: head.ty.clone(),
-                            found: ir.ty.clone(),
-                        },
-                    });
-                }
+            irs.push(self.lower_expr(arg)?);
+            if i == 0 && !expected_item_type.is_complete() {
+                expected_item_type = irs[0].ty.clone();
             }
-            irs.push(ir);
+            self.expected_type.push(expected_item_type.clone())
         }
 
         Some(Ir {
-            ty: TypeInfo::Array(irs.first().unwrap().ty.clone().into()),
+            ty: TypeInfo::Array(expected_item_type.into()),
             kind: IrKind::Array(irs),
         })
     }

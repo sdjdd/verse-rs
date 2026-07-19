@@ -7,8 +7,8 @@ pub struct Slot(pub usize);
 
 #[derive(Debug, Clone)]
 pub struct Ir {
-    pub kind: IrKind,
     pub ty: TypeInfo,
+    pub kind: IrKind,
 }
 
 #[derive(Debug, Clone)]

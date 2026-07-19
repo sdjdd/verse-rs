@@ -74,21 +74,12 @@ impl Into<Expression> for IdExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct DeclExpr {
-    pub target: Symbol,
+    pub target: IdExpr,
     pub typ: Option<TypeExpr>,
+    #[new(into)]
     pub value: Box<Expression>,
-}
-
-impl DeclExpr {
-    pub fn new(target: Symbol, typ: Option<TypeExpr>, value: Expression) -> Self {
-        Self {
-            target,
-            typ,
-            value: value.into(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
