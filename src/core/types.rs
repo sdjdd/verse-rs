@@ -104,10 +104,6 @@ impl TypeRegistry {
         let index = self.set.insert_full(key).0;
         TypeId(index as u32)
     }
-
-    pub fn lookup(&self, id: TypeId) -> Option<&TypeInfo> {
-        self.set.get_index(id.0 as usize)
-    }
 }
 
 #[derive(Clone, Copy)]
