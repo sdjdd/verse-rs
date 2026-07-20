@@ -172,7 +172,7 @@ impl<'src> Parser<'src> {
             Token::Id if self.peek_n(1) == Token::Colon => self.parse_decl_expr(),
             Token::Loop => self.parse_loop_expr(),
             Token::Break => self.parse_break_expr(),
-            Token::Type | Token::Tuple => {
+            Token::Type | Token::Tuple | Token::Question => {
                 let type_expr = self.parse_type_expr()?;
                 Ok(Expression::new(
                     self.gen_expr_id(),
