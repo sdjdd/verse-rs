@@ -30,13 +30,15 @@ pub enum TypeInfo {
 
     Bottom,
 
-    Unknown,
+    Unknown {
+        infer: bool,
+    },
 }
 
 impl TypeInfo {
     pub fn is_complete(&self) -> bool {
         match self {
-            TypeInfo::Unknown => false,
+            TypeInfo::Unknown { .. } => false,
             TypeInfo::Option(t) | TypeInfo::Array(t) | TypeInfo::Type(t) => t.is_complete(),
             TypeInfo::Tuple(ts) => ts.iter().all(|t| t.is_complete()),
             TypeInfo::Function { params, ret } => {
@@ -64,17 +66,17 @@ impl Display for TypeInfo {
             TypeInfo::Option(inner) => write!(f, "?{inner}"),
             TypeInfo::Tuple(elements) => {
                 write!(f, "tuple(")?;
-                for (i, elem) in elements.iter().enumerate() {
+                for (i, e) in elements.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{elem}")?;
+                    write!(f, "{e}")?;
                 }
                 write!(f, ")")
             }
-            TypeInfo::Array(elem) => write!(f, "[]{elem}"),
+            TypeInfo::Array(e) => write!(f, "[]{e}"),
             TypeInfo::Function { params, ret } => {
-                write!(f, "(")?;
+                write!(f, "_(")?;
                 for (i, param) in params.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -83,9 +85,9 @@ impl Display for TypeInfo {
                 }
                 write!(f, "): {ret}")
             }
-            TypeInfo::Type(inner) => write!(f, "{inner}"),
+            TypeInfo::Type(t) => write!(f, "{t}"),
             TypeInfo::Bottom => write!(f, "bottom"),
-            TypeInfo::Unknown => write!(f, "unknown"),
+            TypeInfo::Unknown { .. } => write!(f, "unknown"),
         }
     }
 }

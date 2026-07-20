@@ -1,4 +1,5 @@
 use crate::compiler::ast::{BinaryOp, CompareOp};
+use crate::compiler::lexer::Span;
 use crate::core::ConstId;
 use crate::core::types::TypeInfo;
 
@@ -7,6 +8,7 @@ pub struct Slot(pub usize);
 
 #[derive(Debug, Clone)]
 pub struct Ir {
+    pub span: Span,
     pub ty: TypeInfo,
     pub kind: IrKind,
 }

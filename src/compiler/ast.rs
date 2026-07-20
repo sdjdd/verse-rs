@@ -16,7 +16,6 @@ pub struct Expression {
 pub enum ExprKind {
     Id(IdExpr),
     Decl(DeclExpr),
-    VarDecl(VarDeclExpr),
     Set(SetExpr),
     Integer(i64),
     Float(f64),
@@ -83,19 +82,13 @@ pub struct DeclExpr {
     pub typ: Option<TypeExpr>,
     #[new(into)]
     pub value: Box<Expression>,
+    pub is_var: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct SetExpr {
     pub lhs: Box<Expression>,
     pub rhs: Box<Expression>,
-}
-
-#[derive(Debug, Clone)]
-pub struct VarDeclExpr {
-    pub name: IdExpr,
-    pub typ: TypeExpr,
-    pub expr: Box<Expression>,
 }
 
 #[derive(Debug, Clone)]

@@ -282,7 +282,7 @@ impl<'src> Parser<'src> {
             return Ok(Expression::new(
                 self.gen_expr_id(),
                 lhs.span.start..rhs.span.end,
-                DeclExpr::new(lhs, typ, rhs),
+                DeclExpr::new(lhs, typ, rhs, false),
             ));
         }
 
@@ -324,11 +324,7 @@ impl<'src> Parser<'src> {
         Ok(Expression::new(
             self.gen_expr_id(),
             start..expr.span.end,
-            VarDeclExpr {
-                name,
-                typ,
-                expr: expr.into(),
-            },
+            DeclExpr::new(name, Some(typ), expr, true),
         ))
     }
 
