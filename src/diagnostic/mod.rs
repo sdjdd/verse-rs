@@ -5,28 +5,26 @@ use codespan_reporting::term::{
     termcolor::{ColorChoice, StandardStream},
 };
 
-use crate::compiler::{lexer::LexerError, parser::ParseError, semantic::SemanticError};
-
-pub fn report_semantic_error(err: &SemanticError, src: &str, filename: &str) {
-    print_diagnostic(filename, src, &err.span, &err.kind.to_string());
-}
+use crate::compiler::parser::ParseError;
+use crate::compiler::{CompileError, CompileErrorKind};
 
 pub fn report_parser_error(err: &ParseError, src: &str, filename: &str) {
     let (span, message) = match err {
         ParseError::UnexpectedToken { token, span } => {
             (span, format!("unexpected token `{token:?}`"))
         }
-        ParseError::InvalidToken { token, span } => (span, format!("invalid token `{token:?}`")),
-        ParseError::LexerError { inner, .. } => match inner {
-            LexerError::InvalidToken(span) => {
-                (span, format!("invalid token `{}`", &src[span.clone()]))
-            }
-            _ => unimplemented!(),
-        },
-        ParseError::SyntaxError { message, span } => (span, message.clone()),
+        ParseError::InvalidExpression { span } => (span, err.to_string()),
     };
 
     print_diagnostic(filename, src, span, &message);
+}
+
+pub fn report_compile_error(err: &CompileError, src: &str, filename: &str) {
+    match &err.kind {
+        CompileErrorKind::Lexing(e) => print_diagnostic(filename, src, &err.span, &e.to_string()),
+        CompileErrorKind::Parsing(e) => report_parser_error(e, src, filename),
+        CompileErrorKind::Semantic(e) => print_diagnostic(filename, src, &err.span, &e.to_string()),
+    }
 }
 
 fn print_diagnostic(filename: &str, src: &str, span: &std::ops::Range<usize>, message: &str) {

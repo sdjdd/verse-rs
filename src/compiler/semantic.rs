@@ -2,10 +2,7 @@ use ordermap::OrderSet;
 use std::collections::HashMap;
 use thiserror::Error;
 
-use crate::core::{
-    ConstId, PredefinedSymbols, Symbol, SymbolRegistry,
-    types::{TypeInfo, TypeRegistry},
-};
+use crate::core::{ConstId, PredefinedSymbols, Symbol, SymbolRegistry, types::TypeInfo};
 
 use super::ast::*;
 use super::ir::*;
@@ -134,36 +131,32 @@ impl Scope {
 struct LoopInfo {}
 
 pub struct SemanticAnalyzer<'a> {
-    pub builtin_symbols: PredefinedSymbols,
     pub errors: Vec<SemanticError>,
 
-    pub scopes: Vec<Scope>,
-    pub types: TypeRegistry,
-
+    builtin_symbols: PredefinedSymbols,
+    scopes: Vec<Scope>,
     symbol_table: &'a SymbolRegistry,
     loop_stack: Vec<LoopInfo>,
     failure_contexts: u32,
 }
 
 impl<'a> SemanticAnalyzer<'a> {
-    pub fn new(symbol_table: &'a mut SymbolRegistry) -> Self {
+    pub fn new(symbol_table: &'a mut SymbolRegistry, builtin_symbols: PredefinedSymbols) -> Self {
         let mut global_scope = Scope::new(false);
 
-        let bs = PredefinedSymbols::install(symbol_table);
-
         let predefined_types = [
-            (bs.s_int, TypeInfo::Int),
-            (bs.s_float, TypeInfo::Float),
-            (bs.s_logic, TypeInfo::Logic),
-            (bs.s_char, TypeInfo::Char),
-            (bs.s_char32, TypeInfo::Char32),
-            (bs.s_string, TypeInfo::String),
-            (bs.s_any, TypeInfo::Any),
-            (bs.s_void, TypeInfo::Void),
+            (builtin_symbols.s_int, TypeInfo::Int),
+            (builtin_symbols.s_float, TypeInfo::Float),
+            (builtin_symbols.s_logic, TypeInfo::Logic),
+            (builtin_symbols.s_char, TypeInfo::Char),
+            (builtin_symbols.s_char32, TypeInfo::Char32),
+            (builtin_symbols.s_string, TypeInfo::String),
+            (builtin_symbols.s_any, TypeInfo::Any),
+            (builtin_symbols.s_void, TypeInfo::Void),
         ];
 
         let global_vars = [(
-            bs.s_Print,
+            builtin_symbols.s_Print,
             TypeInfo::Function {
                 params: vec![TypeInfo::Any],
                 ret: TypeInfo::Void.into(),
@@ -180,17 +173,20 @@ impl<'a> SemanticAnalyzer<'a> {
 
         Self {
             scopes: vec![global_scope],
-            builtin_symbols: bs,
+            builtin_symbols,
             errors: vec![],
-            types: TypeRegistry::default(),
             symbol_table,
             loop_stack: vec![],
             failure_contexts: 0,
         }
     }
 
-    pub fn get_global_symbol_index(&self, symbol: Symbol) -> usize {
-        self.scopes[0].lookup(symbol).unwrap().slot.0
+    pub fn get_global_symbol_slots(&self) -> HashMap<Symbol, usize> {
+        self.scopes[0]
+            .variables
+            .iter()
+            .map(|(s, v)| (*s, v.slot.0))
+            .collect()
     }
 
     fn push_scope(&mut self, is_function: bool) {

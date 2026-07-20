@@ -15,23 +15,22 @@ struct LoopContext {
     break_jmp_target_indices: Vec<u32>,
 }
 
-pub struct Compiler {
+pub struct Compiler<'a> {
     pub bytecode: Vec<u8>,
     pub failure_handlers: Vec<FailureHandler>,
+    pub functions: Vec<Function>,
+
     op_stack_size: u16,
     loop_ctx_stack: Vec<LoopContext>,
-    functions: Vec<Function>,
     base_fn_id: usize,
-    pub type_registry: TypeRegistry,
-    pub predefined_types: PredefinedTypes,
+    type_registry: &'a mut TypeRegistry,
+    predefined_types: PredefinedTypes,
 }
 
-impl Compiler {
-    pub fn new() -> Self {
-        let mut type_reg = TypeRegistry::new();
-        let predefined_types = PredefinedTypes::install(&mut type_reg);
+impl<'a> Compiler<'a> {
+    pub fn new(type_registry: &'a mut TypeRegistry, predefined_types: PredefinedTypes) -> Self {
         Self {
-            type_registry: type_reg,
+            type_registry,
             predefined_types,
             bytecode: vec![],
             failure_handlers: vec![],
@@ -42,7 +41,7 @@ impl Compiler {
         }
     }
 
-    pub fn compile(&mut self, irs: Vec<Ir>) -> Vec<Function> {
+    pub fn compile(&mut self, irs: Vec<Ir>) {
         for ir in irs {
             self.compile_ir(ir);
             self.append_op(Opcode::Pop, -1);
@@ -54,7 +53,6 @@ impl Compiler {
             upvalues: vec![],
         };
         self.functions.push(func);
-        self.functions.clone()
     }
 
     pub fn compile_ir(&mut self, ir: Ir) {
@@ -352,11 +350,18 @@ impl Compiler {
     }
 
     fn compile_function(&mut self, fn_ir: FunctionIr, fn_type: TypeInfo) {
-        let mut compiler = Compiler::new();
+        let type_id = self.intern_type(fn_type);
+
+        let mut compiler = Compiler::new(self.type_registry, self.predefined_types);
         compiler.base_fn_id = self.functions.len();
-        compiler.compile_function_body(*fn_ir.body, fn_ir.return_void);
+        compiler.compile_ir(*fn_ir.body);
+        if fn_ir.return_void {
+            compiler.append_op(Opcode::Pop, -1);
+            compiler.append_op(Opcode::PushVoid, 1);
+        }
+
         let func = Function {
-            type_id: self.intern_type(fn_type),
+            type_id,
             bytecode: compiler.bytecode,
             failure_table: compiler.failure_handlers,
             upvalues: fn_ir.upvalues,
@@ -369,28 +374,6 @@ impl Compiler {
         self.append_u32(fn_id as u32);
         self.append_op(Opcode::StoreLocal, 0);
         self.append_u32(fn_ir.slot.0 as u32);
-    }
-
-    fn compile_function_body(&mut self, body: Ir, return_void: bool) {
-        if let IrKind::Block(irs) = body.kind {
-            let len = irs.len();
-            for (i, ir) in irs.into_iter().enumerate() {
-                self.compile_ir(ir);
-                let is_last = i == len - 1;
-                if !is_last || return_void {
-                    self.append_op(Opcode::Pop, -1);
-                }
-            }
-            if return_void {
-                self.append_op(Opcode::PushVoid, 1);
-            }
-        } else {
-            self.compile_ir(body);
-            if return_void {
-                self.append_op(Opcode::Pop, -1);
-                self.append_op(Opcode::PushVoid, 1);
-            }
-        }
     }
 
     fn compile_call(&mut self, callee: Ir, args: Vec<Ir>) {

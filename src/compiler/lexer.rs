@@ -1,26 +1,21 @@
 use std::{collections::VecDeque, ops::Range};
 
-use logos::{Lexer, Logos, SpannedIter};
+use logos::{Logos, SpannedIter};
+use thiserror::Error;
 
 pub type Span = Range<usize>;
 
-#[derive(Default, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Error)]
 pub enum LexerError {
+    #[error("invalid token")]
     InvalidToken(Span),
+    #[error("invalid indent size")]
     InvalidIndentSize(Span),
+    #[error("inconsistent indent size")]
     InconsistentIndent(Span),
-    #[default]
-    Other,
-}
-
-impl LexerError {
-    fn from_lexer(lex: &mut Lexer<Token>) -> Self {
-        Self::InvalidToken(lex.span().clone())
-    }
 }
 
 #[derive(Logos, Debug, PartialEq, Clone, Copy)]
-#[logos(error(LexerError, LexerError::from_lexer))]
 #[logos(subpattern escape = r#"[tnr"'\\{}<>&#~]"#)]
 #[logos(subpattern string = r#"([^"{}\\\r\n]|\\.)*"#)]
 pub enum Token {
@@ -221,8 +216,8 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
 
             let (token, span) = match self.lexer.next() {
                 Some((Ok(token), span)) => (token, span),
-                Some((Err(err), _)) => {
-                    self.pending.push_back(Err(err));
+                Some((Err(_), span)) => {
+                    self.pending.push_back(Err(LexerError::InvalidToken(span)));
                     self.has_error = true;
                     break;
                 }

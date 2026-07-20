@@ -4,7 +4,7 @@ use crate::core::{ConstId, ConstValue, Symbol, SymbolRegistry};
 
 use super::ast::*;
 use super::const_pool::ConstPool;
-use super::lexer::{LexerError, Span, Token};
+use super::lexer::{Span, Token};
 
 #[derive(Debug)]
 pub struct Program {
@@ -16,40 +16,39 @@ pub enum ParseError {
     #[error("Unexpected token {token:?} at {span:?}")]
     UnexpectedToken { token: Token, span: Span },
 
-    #[error("Invalid token {token} at {span:?}")]
-    InvalidToken { token: String, span: Span },
-
-    #[error("SyntaxError: {message} at {span:?}")]
-    SyntaxError { message: String, span: Span },
-
-    #[error("LexerError: {inner:?} at {span:?}")]
-    LexerError { inner: LexerError, span: Span },
+    #[error("Invalid expression")]
+    InvalidExpression { span: Span },
 }
 
 pub type ParseResult<T = Expression> = Result<T, ParseError>;
 
-pub struct Parser<'src> {
+pub struct Parser<'src, 'a> {
     source: &'src str,
     tokens: &'src [(Token, Span)],
     pos: usize,
     current_token_span: Span,
     next_expr_id: u32,
+    symbol_table: &'a mut SymbolRegistry,
+    const_pool: &'a mut ConstPool,
 
-    pub symbol_table: SymbolRegistry,
-    pub const_pool: ConstPool,
     pub errors: Vec<ParseError>,
 }
 
-impl<'src> Parser<'src> {
-    pub fn new(source: &'src str, tokens: &'src [(Token, Span)]) -> Self {
+impl<'src, 'a> Parser<'src, 'a> {
+    pub fn new(
+        source: &'src str,
+        tokens: &'src [(Token, Span)],
+        symbol_table: &'a mut SymbolRegistry,
+        const_pool: &'a mut ConstPool,
+    ) -> Self {
         Self {
             source,
             tokens,
             pos: 0,
             current_token_span: 0..0,
             next_expr_id: 0,
-            symbol_table: SymbolRegistry::new(),
-            const_pool: ConstPool::new(),
+            symbol_table,
+            const_pool,
             errors: Vec::new(),
         }
     }
@@ -768,10 +767,7 @@ impl<'src> Parser<'src> {
         }
         i64::from_str_radix(src, radix)
             .map(ExprKind::Integer)
-            .map_err(|_| ParseError::InvalidToken {
-                token: "Invalid integer literal".to_string(),
-                span: self.span(),
-            })
+            .map_err(|_| ParseError::InvalidExpression { span: self.span() })
     }
 
     fn parse_float_literal(&mut self) -> ParseResult<ExprKind> {
@@ -781,10 +777,7 @@ impl<'src> Parser<'src> {
         }
         src.parse::<f64>()
             .map(ExprKind::Float)
-            .map_err(|_| ParseError::InvalidToken {
-                token: "Invalid float literal".to_string(),
-                span: self.span(),
-            })
+            .map_err(|_| ParseError::InvalidExpression { span: self.span() })
     }
 
     fn parse_char_literal(&mut self) -> ParseResult<ExprKind> {
@@ -912,7 +905,9 @@ mod tests {
 
     fn parse_program(src: &str) -> (Program, usize) {
         let tokens = tokenize(src).unwrap();
-        let mut parser = Parser::new(src, &tokens);
+        let mut st = SymbolRegistry::new();
+        let mut cp = ConstPool::new();
+        let mut parser = Parser::new(src, &tokens, &mut st, &mut cp);
         let program = parser.parse();
         (program, parser.errors.len())
     }
