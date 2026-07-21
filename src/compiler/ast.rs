@@ -93,7 +93,7 @@ pub struct DeclExpr {
     pub typ: TypeExpr,
     #[new(into)]
     pub value: Box<Expression>,
-    pub is_var: bool,
+    pub mutable: bool,
 }
 
 impl Into<Expression> for DeclExpr {

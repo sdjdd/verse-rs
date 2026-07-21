@@ -290,7 +290,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.parse_type_expr()
     }
 
-    fn parse_decl_expr(&mut self, is_var: bool) -> ParseResult<DeclExpr> {
+    fn parse_decl_expr(&mut self, mutable: bool) -> ParseResult<DeclExpr> {
         let lhs = self.parse_id_expr()?;
         self.expect(Token::Colon)?;
         let typ = self.parse_type_expr()?;
@@ -302,7 +302,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             lhs,
             typ,
             rhs,
-            is_var,
+            mutable,
         ))
     }
 
