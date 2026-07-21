@@ -316,7 +316,6 @@ impl Vm {
             Value::Char(_) => self.predefined_types.t_char,
             Value::Char32(_) => self.predefined_types.t_char32,
             Value::String(_) => self.predefined_types.t_string,
-            Value::False => self.predefined_types.t_false,
             Value::Logic(_) => self.predefined_types.t_logic,
             Value::Option { type_id, .. }
             | Value::Tuple { type_id, .. }

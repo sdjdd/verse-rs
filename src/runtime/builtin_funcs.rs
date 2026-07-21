@@ -18,7 +18,6 @@ pub fn write_value(
         }
         Value::Void => write!(w, "[Void]"),
         Value::Logic(value) => write!(w, "logic{{{}}}", value),
-        Value::False => write!(w, "false"),
         Value::Integer(value) => write!(w, "{}", value),
         Value::Rational(num, den) => write!(w, "{}/{}", num, den),
         Value::Float(value) => write!(w, "{}", value),

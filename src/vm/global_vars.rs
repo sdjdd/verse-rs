@@ -55,7 +55,7 @@ pub fn install(
 
     global_vars.sort_by(|a, b| a.0.cmp(&b.0));
 
-    vm.stack.resize(global_vars.len(), Value::False);
+    vm.stack.resize(global_vars.len(), Value::Void);
 
     for (i, v) in global_vars {
         vm.stack[i] = v;

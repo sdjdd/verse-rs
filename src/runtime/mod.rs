@@ -43,7 +43,6 @@ pub enum Value {
     Char(u8),
     Char32(char),
     String(String),
-    False,
     Logic(bool),
     Option {
         type_id: TypeId,

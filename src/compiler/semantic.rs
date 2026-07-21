@@ -1349,7 +1349,9 @@ impl<'a> SemanticAnalyzer<'a> {
             let value_ir = self.lower_expr(&cons_expr.args[0])?;
             let mut value_ty = value_ir.ty.clone();
 
-            if value_ty == TypeInfo::False {
+            if let IrKind::Logic(false) = value_ir.kind {
+                // V := option{ false }
+                //                ^-- unknown inner type
                 value_ty = TypeInfo::Unknown { infer: true };
             }
 
