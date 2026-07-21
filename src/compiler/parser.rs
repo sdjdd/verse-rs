@@ -245,8 +245,8 @@ impl<'src, 'a> Parser<'src, 'a> {
                     fields
                         .into_iter()
                         .map(|f| StructField {
-                            name: f.target,
-                            ty: f.typ,
+                            name: f.name,
+                            ty: f.ty,
                             default: *f.value,
                         })
                         .collect(),

@@ -303,7 +303,7 @@ impl<'a> SemanticAnalyzer<'a> {
             ExprKind::Char32(v) => self.lower_char32(span, *v).into(),
             ExprKind::String(v) => self.lower_string(span, *v).into(),
             ExprKind::Decl(e) => {
-                self.lower_decl_expr(span, &e.target, Some(&e.typ), &e.value, e.mutable)
+                self.lower_decl_expr(span, &e.name, Some(&e.ty), &e.value, e.mutable)
             }
             ExprKind::Init(e) => self.lower_decl_expr(span, &e.name, None, &e.value, false),
             ExprKind::Set(e) => self.lower_set_expr(span, e),

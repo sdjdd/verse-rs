@@ -89,8 +89,8 @@ impl Into<Expression> for IdExpr {
 pub struct DeclExpr {
     pub id: u32,
     pub span: Span,
-    pub target: IdExpr,
-    pub typ: TypeExpr,
+    pub name: IdExpr,
+    pub ty: TypeExpr,
     #[new(into)]
     pub value: Box<Expression>,
     pub mutable: bool,
