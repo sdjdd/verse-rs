@@ -94,10 +94,12 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     fn unexpected_error(&self) -> ParseError {
-        ParseError::UnexpectedToken {
-            token: self.tokens[self.pos].0,
-            span: self.tokens[self.pos].1.clone(),
-        }
+        let (token, span) = self
+            .tokens
+            .get(self.pos.saturating_sub(1))
+            .cloned()
+            .unwrap_or_else(|| (Token::EOF, self.source.len()..self.source.len()));
+        ParseError::UnexpectedToken { token, span }
     }
 
     fn expect(&mut self, token: Token) -> ParseResult<()> {
@@ -166,12 +168,16 @@ impl<'src, 'a> Parser<'src, 'a> {
         match self.peek() {
             Token::If => self.parse_if_expr(),
             Token::Set => self.parse_set_expr(),
-            Token::Var => self.parse_var_decl_expr(),
+            Token::Var => {
+                self.next();
+                Ok(self.parse_decl_expr(true)?.into())
+            }
             Token::Id if self.looks_like_function_signature() => self.parse_function_expr(),
-            Token::Id if self.peek_n(1) == Token::Colon => self.parse_decl_expr(),
+            Token::Id if self.peek_n(1) == Token::Colon => Ok(self.parse_decl_expr(false)?.into()),
+            Token::Id if self.peek_n(1) == Token::ColonEq => self.parse_init_expr(),
             Token::Loop => self.parse_loop_expr(),
             Token::Break => self.parse_break_expr(),
-            Token::Type | Token::Tuple | Token::Question => {
+            Token::Type | Token::Tuple | Token::Question | Token::Struct => {
                 let type_expr = self.parse_type_expr()?;
                 Ok(Expression::new(
                     self.gen_expr_id(),
@@ -229,11 +235,30 @@ impl<'src, 'a> Parser<'src, 'a> {
             });
         }
 
+        if self.consume_if(Token::Struct) {
+            self.expect(Token::Colon)?;
+            self.expect(Token::Newline)?;
+            let fields = self.parse_new_indent_level_expressions(|p| p.parse_decl_expr(false))?;
+            return Ok(TypeExpr {
+                span: self.span(),
+                kind: TypeExprKind::Struct(
+                    fields
+                        .into_iter()
+                        .map(|f| StructField {
+                            name: f.target,
+                            ty: f.typ,
+                            default: *f.value,
+                        })
+                        .collect(),
+                ),
+            });
+        }
+
         self.expect(Token::Id)?;
         let symbol = self.symbol_table.intern(self.slice());
         Ok(TypeExpr {
-            kind: TypeExprKind::Named(symbol),
             span: self.span(),
+            kind: TypeExprKind::Named(symbol),
         })
     }
 
@@ -265,34 +290,38 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.parse_type_expr()
     }
 
-    fn parse_decl_expr(&mut self) -> ParseResult<Expression> {
+    fn parse_decl_expr(&mut self, is_var: bool) -> ParseResult<DeclExpr> {
         let lhs = self.parse_id_expr()?;
+        self.expect(Token::Colon)?;
+        let typ = self.parse_type_expr()?;
+        self.expect(Token::Eq)?;
+        let rhs = self.parse_expression()?;
+        Ok(DeclExpr::new(
+            self.gen_expr_id(),
+            lhs.span.start..rhs.span.end,
+            lhs,
+            typ,
+            rhs,
+            is_var,
+        ))
+    }
 
-        if self.consume_if(Token::Colon) {
-            let typ = if self.consume_if(Token::Eq) {
-                None
-            } else {
-                let typ = self.parse_type_expr()?;
-                self.expect(Token::Eq)?;
-                Some(typ)
-            };
-
-            let rhs = self.parse_expression()?;
-            return Ok(Expression::new(
-                self.gen_expr_id(),
-                lhs.span.start..rhs.span.end,
-                DeclExpr::new(lhs, typ, rhs, false),
-            ));
-        }
-
-        Ok(lhs.into())
+    fn parse_init_expr(&mut self) -> ParseResult<Expression> {
+        let name = self.parse_id_expr()?;
+        self.expect(Token::ColonEq)?;
+        let value = self.parse_expression()?;
+        Ok(Expression::new(
+            self.gen_expr_id(),
+            name.span.start..value.span.end,
+            InitExpr::new(name, value),
+        ))
     }
 
     fn parse_set_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::Set)?;
         let start = self.span().start;
 
-        let lhs = self.parse_primary_expr()?;
+        let lhs = self.parse_lhs_expr()?;
         self.expect(Token::Eq)?;
         let rhs = self.parse_expression()?;
 
@@ -303,27 +332,6 @@ impl<'src, 'a> Parser<'src, 'a> {
                 lhs: lhs.into(),
                 rhs: rhs.into(),
             },
-        ))
-    }
-
-    fn parse_var_decl_expr(&mut self) -> ParseResult<Expression> {
-        self.expect(Token::Var)?;
-        let start = self.span().start;
-
-        self.expect(Token::Id)?;
-        let symbol = self.symbol_table.intern(self.slice());
-        let name = IdExpr::new(self.gen_expr_id(), self.span(), symbol);
-
-        self.expect(Token::Colon)?;
-        let typ = self.parse_type_expr()?;
-
-        self.expect(Token::Eq)?;
-        let expr = self.parse_expression()?;
-
-        Ok(Expression::new(
-            self.gen_expr_id(),
-            start..expr.span.end,
-            DeclExpr::new(name, Some(typ), expr, true),
         ))
     }
 
@@ -461,7 +469,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 expr = Expression::new(
                     self.gen_expr_id(),
                     expr.span.start..self.span().end,
-                    MemberExpr::new(expr, Box::new(id_expr.into())),
+                    MemberExpr::new(expr, Box::new(id_expr)),
                 );
                 continue;
             }
@@ -627,14 +635,40 @@ impl<'src, 'a> Parser<'src, 'a> {
                 }
                 break;
             }
-            if self.peek() != end {
+            if self.next() != end {
                 let err = self.unexpected_error();
                 self.synchronize_to(end);
                 return Err(err);
             }
-            self.next();
         }
         Ok(list)
+    }
+
+    fn parse_new_indent_level_expressions<P, E>(&mut self, parse: P) -> ParseResult<Vec<E>>
+    where
+        P: Fn(&mut Self) -> ParseResult<E>,
+    {
+        self.expect(Token::Indent)?;
+        let mut exprs = vec![];
+        loop {
+            match parse(self) {
+                Ok(expr) => {
+                    exprs.push(expr);
+                }
+                Err(e) => {
+                    self.errors.push(e);
+                    while !matches!(self.peek(), Token::Newline | Token::EOF) {
+                        self.next();
+                    }
+                }
+            }
+            self.skip_newlines();
+            if matches!(self.peek(), Token::Dedent | Token::EOF) {
+                self.next();
+                break;
+            }
+        }
+        Ok(exprs)
     }
 
     fn synchronize_to(&mut self, end: Token) {
@@ -716,44 +750,18 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     fn parse_literal_expr(&mut self) -> ParseResult<Expression> {
-        let expr = match self.peek() {
-            Token::IntegerLiteral => {
-                self.next();
-                self.parse_integer_literal()?
-            }
-            Token::FloatLiteral => {
-                self.next();
-                self.parse_float_literal()?
-            }
-            Token::CharLiteral => {
-                self.next();
-                self.parse_char_literal()?
-            }
-            Token::Char32Literal => {
-                self.next();
-                self.parse_char32_literal()?
-            }
-            Token::True => {
-                self.next();
-                ExprKind::Logic(true)
-            }
-            Token::False => {
-                self.next();
-                ExprKind::Logic(false)
-            }
+        let expr = match self.next() {
+            Token::IntegerLiteral => self.parse_integer_literal()?,
+            Token::FloatLiteral => self.parse_float_literal()?,
+            Token::CharLiteral => self.parse_char_literal()?,
+            Token::Char32Literal => self.parse_char32_literal()?,
+            Token::True => ExprKind::Logic(true),
+            Token::False => ExprKind::Logic(false),
             Token::StringLiteral => {
-                self.next();
                 let s = self.slice();
                 ExprKind::String(self.escape_string_literal(&s[1..s.len() - 1]))
             }
-            _ => {
-                let (token, span) = self
-                    .tokens
-                    .get(self.pos)
-                    .cloned()
-                    .unwrap_or((Token::EOF, 0..0));
-                return Err(ParseError::UnexpectedToken { token, span });
-            }
+            _ => return Err(self.unexpected_error()),
         };
         Ok(Expression::new(self.gen_expr_id(), self.span(), expr))
     }
@@ -859,7 +867,7 @@ impl<'src, 'a> Parser<'src, 'a> {
     fn parse_tuple_expr(&mut self) -> ParseResult<Expression> {
         self.expect(Token::LParen)?;
         let start = self.span().start;
-        let expr = self.parse_expression()?;
+        let mut expr = self.parse_expression()?;
         match self.next() {
             Token::Comma => {
                 let mut elements = vec![expr];
@@ -873,7 +881,10 @@ impl<'src, 'a> Parser<'src, 'a> {
                     ExprKind::Tuple(TupleExpr { elements }),
                 ))
             }
-            Token::RParen => Ok(expr),
+            Token::RParen => {
+                expr.span = start..self.span().end;
+                Ok(expr)
+            }
             _ => Err(self.unexpected_error()),
         }
     }

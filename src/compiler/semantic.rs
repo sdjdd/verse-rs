@@ -1,5 +1,7 @@
-use ordermap::OrderSet;
 use std::collections::HashMap;
+
+use ordermap::OrderMap;
+use ordermap::OrderSet;
 use thiserror::Error;
 
 use crate::core::{ConstId, PredefinedSymbols, Symbol, SymbolRegistry, types::TypeInfo};
@@ -69,6 +71,12 @@ pub enum SemanticErrorKind {
 
     #[error("need type annotation")]
     TypeAnnotationRequired,
+
+    #[error("struct{} has no field `{field_name}`", .struct_name.as_deref().map(|name| format!(" `{name}`")).unwrap_or_default())]
+    UndefinedStructField {
+        struct_name: Option<String>,
+        field_name: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +138,12 @@ impl Scope {
 
 struct LoopInfo {}
 
+#[derive(Clone)]
+struct StructInfo {
+    name: Option<Symbol>,
+    fields: OrderMap<Symbol, (TypeInfo, Ir)>,
+}
+
 pub struct SemanticAnalyzer<'a> {
     pub errors: Vec<SemanticError>,
 
@@ -138,6 +152,7 @@ pub struct SemanticAnalyzer<'a> {
     symbol_table: &'a SymbolRegistry,
     loop_stack: Vec<LoopInfo>,
     failure_contexts: u32,
+    structs: Vec<StructInfo>,
 }
 
 impl<'a> SemanticAnalyzer<'a> {
@@ -172,12 +187,13 @@ impl<'a> SemanticAnalyzer<'a> {
         }
 
         Self {
-            scopes: vec![global_scope],
+            scopes: vec![global_scope, Scope::new(true)],
             builtin_symbols,
             errors: vec![],
             symbol_table,
             loop_stack: vec![],
             failure_contexts: 0,
+            structs: vec![],
         }
     }
 
@@ -286,7 +302,10 @@ impl<'a> SemanticAnalyzer<'a> {
             ExprKind::Char(v) => self.lower_char(span, *v).into(),
             ExprKind::Char32(v) => self.lower_char32(span, *v).into(),
             ExprKind::String(v) => self.lower_string(span, *v).into(),
-            ExprKind::Decl(e) => self.lower_decl_expr(span, e),
+            ExprKind::Decl(e) => {
+                self.lower_decl_expr(span, &e.target, Some(&e.typ), &e.value, e.is_var)
+            }
+            ExprKind::Init(e) => self.lower_decl_expr(span, &e.name, None, &e.value, false),
             ExprKind::Set(e) => self.lower_set_expr(span, e),
             ExprKind::Id(e) => self.lower_id_expr(span, e),
             ExprKind::Block(e) => self.lower_block_expr(span, e),
@@ -320,18 +339,6 @@ impl<'a> SemanticAnalyzer<'a> {
         }
 
         match (src, dst) {
-            (src @ (TypeInfo::True | TypeInfo::False), dst @ TypeInfo::Logic) => {
-                *src = dst.clone();
-                true
-            }
-            (src @ TypeInfo::False, dst @ TypeInfo::Option(_)) => {
-                *src = dst.clone();
-                true
-            }
-            (src @ TypeInfo::False, dst) => {
-                *src = TypeInfo::Logic;
-                src == dst
-            }
             (TypeInfo::Option(a), TypeInfo::Option(b)) => {
                 self.try_to_make_type_match(a.as_mut(), b)
             }
@@ -373,6 +380,11 @@ impl<'a> SemanticAnalyzer<'a> {
                 [.., ir] => return self.ensure_type_match(e, ir),
                 _ => {}
             },
+            (e @ TypeInfo::Option(_), IrKind::Logic(false)) => {
+                found.ty = e.clone();
+                found.kind = IrKind::Option(None);
+                return;
+            }
             _ => {}
         }
 
@@ -406,11 +418,7 @@ impl<'a> SemanticAnalyzer<'a> {
     fn lower_logic_expr(&mut self, span: Span, value: bool) -> Ir {
         Ir {
             span,
-            ty: if value {
-                TypeInfo::True
-            } else {
-                TypeInfo::False
-            },
+            ty: TypeInfo::Logic,
             kind: IrKind::Logic(value),
         }
     }
@@ -439,13 +447,16 @@ impl<'a> SemanticAnalyzer<'a> {
         }
     }
 
-    fn lower_decl_expr(&mut self, span: Span, expr: &DeclExpr) -> Option<Ir> {
-        let mut binding_type = expr
-            .typ
-            .as_ref()
-            .map(|type_expr| self.parse_type_expr(type_expr));
-
-        let mut value_ir = self.lower_expr(&expr.value)?;
+    fn lower_decl_expr(
+        &mut self,
+        span: Span,
+        name: &IdExpr,
+        ty: Option<&TypeExpr>,
+        value: &Expression,
+        mutable: bool,
+    ) -> Option<Ir> {
+        let mut binding_type = ty.map(|ty| self.parse_type_expr(ty));
+        let mut value_ir = self.lower_expr(value)?;
 
         if let Some(binding_type) = &mut binding_type {
             self.ensure_type_match(binding_type, &mut value_ir);
@@ -454,12 +465,22 @@ impl<'a> SemanticAnalyzer<'a> {
         let binding_type = binding_type.unwrap_or_else(|| value_ir.ty.clone());
         if !binding_type.is_complete() {
             self.errors.push(SemanticError {
-                span: expr.target.span.clone(),
+                span: name.span.clone(),
                 kind: SemanticErrorKind::TypeAnnotationRequired,
             });
         }
 
-        let slot = self.declare(expr.target.symbol, binding_type.clone(), expr.is_var);
+        let slot = self.declare(name.symbol, binding_type.clone(), mutable);
+
+        if let TypeInfo::Type(inner_type) = &binding_type {
+            match **inner_type {
+                TypeInfo::Struct { id } => {
+                    // Give struct a name ;)
+                    self.structs[id as usize].name = Some(name.symbol);
+                }
+                _ => {}
+            }
+        }
 
         Some(Ir {
             span,
@@ -474,7 +495,7 @@ impl<'a> SemanticAnalyzer<'a> {
     fn lower_set_expr(&mut self, span: Span, expr: &SetExpr) -> Option<Ir> {
         match &expr.lhs.kind {
             ExprKind::Id(id_expr) => {
-                let var = match self.lookup(&id_expr.symbol) {
+                let mut var = match self.lookup(&id_expr.symbol) {
                     Some(var) => var,
                     None => {
                         self.errors.push(SemanticError {
@@ -496,17 +517,73 @@ impl<'a> SemanticAnalyzer<'a> {
                     })
                 }
 
-                let value = self.lower_expr(&expr.rhs)?;
-                Some(self.make_store_ir(span, &var, value))
+                let mut value = self.lower_expr(&expr.rhs)?;
+                self.ensure_type_match(&mut var.type_info, &mut value);
+                return Some(self.make_store_ir(span, &var, value));
             }
-            _ => {
-                self.errors.push(SemanticError {
-                    span: expr.lhs.span.clone(),
-                    kind: SemanticErrorKind::InvalidAssignmentTarget,
-                });
-                None
+            ExprKind::Member(member_expr) => {
+                let obj = self.lower_expr(&member_expr.object)?;
+                match &obj.ty {
+                    TypeInfo::Struct { id } => {
+                        let mut value_ir = self.lower_expr(&expr.rhs)?;
+                        let struct_info = &self.structs[*id as usize];
+                        let field = struct_info.fields.get_full(&member_expr.property.symbol);
+                        return if let Some((index, _, (ty, _))) = field {
+                            let mut expected = ty.clone();
+                            self.ensure_type_match(&mut expected, &mut value_ir);
+                            Some(Ir {
+                                span,
+                                ty: expected,
+                                kind: IrKind::SetStructField {
+                                    obj: obj.into(),
+                                    index,
+                                    value: value_ir.into(),
+                                },
+                            })
+                        } else {
+                            self.errors.push(SemanticError {
+                                span,
+                                kind: SemanticErrorKind::UndefinedStructField {
+                                    struct_name: struct_info
+                                        .name
+                                        .map(|symbol| self.symbol_table.lookup(symbol).to_string()),
+                                    field_name: self
+                                        .symbol_table
+                                        .lookup(member_expr.property.symbol)
+                                        .to_string(),
+                                },
+                            });
+                            None
+                        };
+                    }
+                    _ => {}
+                }
             }
+            ExprKind::Call(_) => {
+                let callee = self.lower_expr(&expr.lhs)?;
+                match callee.kind {
+                    IrKind::IndexTuple { tuple, index } => {
+                        let value = self.lower_expr(&expr.rhs)?;
+                        return Some(Ir {
+                            span,
+                            ty: callee.ty,
+                            kind: IrKind::SetTupleElement {
+                                obj: tuple,
+                                index,
+                                value: value.into(),
+                            },
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
         }
+        self.errors.push(SemanticError {
+            span: expr.lhs.span.clone(),
+            kind: SemanticErrorKind::InvalidAssignmentTarget,
+        });
+        None
     }
 
     fn lower_id_expr(&mut self, span: Span, expr: &IdExpr) -> Option<Ir> {
@@ -1106,6 +1183,38 @@ impl<'a> SemanticAnalyzer<'a> {
             TypeExprKind::Array(elem_type) => {
                 TypeInfo::Array(self.parse_type_expr(elem_type).into())
             }
+            TypeExprKind::Struct(fields) => {
+                let mut field_infos = OrderMap::new();
+                for f in fields {
+                    let name = f.name.symbol;
+                    let mut ty = self.parse_type_expr(&f.ty);
+                    match self.lower_expr(&f.default) {
+                        Some(mut ir) => {
+                            self.ensure_type_match(&mut ty, &mut ir);
+                            field_infos.insert(name, (ty, ir));
+                        }
+                        _ => {
+                            field_infos.insert(
+                                name,
+                                (
+                                    ty.clone(),
+                                    Ir {
+                                        span: f.default.span.clone(),
+                                        ty,
+                                        kind: IrKind::Break, // TODO: replace it with a placeholder IrKind
+                                    },
+                                ),
+                            );
+                        }
+                    };
+                }
+                let struct_id = self.structs.len() as u32;
+                self.structs.push(StructInfo {
+                    name: None,
+                    fields: field_infos,
+                });
+                TypeInfo::Struct { id: struct_id }
+            }
             TypeExprKind::Function { params, ret } => TypeInfo::Function {
                 params: params.iter().map(|p| self.parse_type_expr(p)).collect(),
                 ret: self.parse_type_expr(ret).into(),
@@ -1126,9 +1235,9 @@ impl<'a> SemanticAnalyzer<'a> {
     fn lower_member_expr(&mut self, span: Span, expr: &MemberExpr) -> Option<Ir> {
         let obj = self.lower_expr(&expr.object)?;
 
-        if matches!(obj.ty, TypeInfo::String | TypeInfo::Array(_)) {
-            if let ExprKind::Id(id_expr) = &expr.property.kind {
-                if id_expr.symbol == self.builtin_symbols.s_Length {
+        match obj.ty {
+            TypeInfo::String | TypeInfo::Array(_) => {
+                if expr.property.symbol == self.builtin_symbols.s_Length {
                     return Some(Ir {
                         span,
                         kind: IrKind::GetLength(obj.into()),
@@ -1136,9 +1245,36 @@ impl<'a> SemanticAnalyzer<'a> {
                     });
                 }
             }
+            TypeInfo::Struct { id } => {
+                let struct_info = &self.structs[id as usize];
+                let struct_name = struct_info.name;
+                return if let Some((field_index, _, (ty, _))) =
+                    struct_info.fields.get_full(&expr.property.symbol)
+                {
+                    Some(Ir {
+                        span,
+                        ty: ty.clone(),
+                        kind: IrKind::GetStructField {
+                            obj: obj.into(),
+                            index: field_index,
+                        },
+                    })
+                } else {
+                    self.errors.push(SemanticError {
+                        span: expr.property.span.clone(),
+                        kind: SemanticErrorKind::UndefinedStructField {
+                            struct_name: struct_name
+                                .map(|symbol| self.symbol_table.lookup(symbol).to_string()),
+                            field_name: self.symbol_table.lookup(expr.property.symbol).to_string(),
+                        },
+                    });
+                    None
+                };
+            }
+            _ => {}
         }
 
-        None
+        todo!()
     }
 
     fn lower_construct_expr(&mut self, span: Span, cons_expr: &ConstructExpr) -> Option<Ir> {
@@ -1149,9 +1285,63 @@ impl<'a> SemanticAnalyzer<'a> {
             if id_expr.symbol == self.builtin_symbols.s_array {
                 return self.lower_construct_array(span, cons_expr);
             }
+            if let Some(var) = self.lookup(&id_expr.symbol) {
+                match var.type_info {
+                    TypeInfo::Type(t) => match *t {
+                        TypeInfo::Struct { id } => {
+                            let struct_info = &self.structs[id as usize];
+                            let struct_name = struct_info.name;
+                            let mut init_fields = struct_info.fields.clone();
+
+                            for arg in cons_expr.args.iter() {
+                                match &arg.kind {
+                                    ExprKind::Init(e) => {
+                                        if let Some((index, _, (ty, _))) =
+                                            init_fields.get_full_mut(&e.name.symbol)
+                                        {
+                                            let mut value_ir = self.lower_expr(&e.value)?;
+                                            self.ensure_type_match(ty, &mut value_ir);
+                                            init_fields[index].1 = value_ir;
+                                        } else {
+                                            self.errors.push(SemanticError {
+                                                span: e.name.span.clone(),
+                                                kind: SemanticErrorKind::UndefinedStructField {
+                                                    struct_name: struct_name.map(|symbol| {
+                                                        self.symbol_table.lookup(symbol).to_string()
+                                                    }),
+                                                    field_name: self
+                                                        .symbol_table
+                                                        .lookup(e.name.symbol)
+                                                        .to_string(),
+                                                },
+                                            })
+                                        }
+                                    }
+                                    _ => self.errors.push(SemanticError {
+                                        span: arg.span.clone(),
+                                        kind: SemanticErrorKind::InvalidExpression,
+                                    }),
+                                }
+                            }
+
+                            return Some(Ir {
+                                span,
+                                ty: (*t).clone(),
+                                kind: IrKind::MakeStruct {
+                                    fields: init_fields.into_values().map(|(.., ir)| ir).collect(),
+                                },
+                            });
+                        }
+                        _ => {
+                            todo!("{:?}", t);
+                        }
+                    },
+                    _ => {}
+                }
+            }
         }
 
-        todo!()
+        todo!("{:?}", cons_expr);
     }
 
     fn lower_construct_option(&mut self, span: Span, cons_expr: &ConstructExpr) -> Option<Ir> {

@@ -65,6 +65,7 @@ pub fn write_value(
             };
             write_value(w, heap, value, quote_string)
         }
+        Value::Rc(rc) => write_value(w, heap, &*rc.borrow(), quote_string),
     }
 }
 

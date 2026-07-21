@@ -16,6 +16,7 @@ pub struct Expression {
 pub enum ExprKind {
     Id(IdExpr),
     Decl(DeclExpr),
+    Init(InitExpr),
     Set(SetExpr),
     Integer(i64),
     Float(f64),
@@ -46,11 +47,19 @@ pub enum TypeExprKind {
     Option(Box<TypeExpr>),
     Tuple(Vec<TypeExpr>),
     Array(Box<TypeExpr>),
+    Struct(Vec<StructField>),
     Function {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
     },
     Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructField {
+    pub name: IdExpr,
+    pub ty: TypeExpr,
+    pub default: Expression,
 }
 
 #[derive(Debug, Clone)]
@@ -78,11 +87,30 @@ impl Into<Expression> for IdExpr {
 
 #[derive(Debug, Clone, new)]
 pub struct DeclExpr {
+    pub id: u32,
+    pub span: Span,
     pub target: IdExpr,
-    pub typ: Option<TypeExpr>,
+    pub typ: TypeExpr,
     #[new(into)]
     pub value: Box<Expression>,
     pub is_var: bool,
+}
+
+impl Into<Expression> for DeclExpr {
+    fn into(self) -> Expression {
+        Expression {
+            id: self.id,
+            span: self.span.clone(),
+            kind: ExprKind::Decl(self),
+        }
+    }
+}
+
+#[derive(Debug, Clone, new)]
+pub struct InitExpr {
+    pub name: IdExpr,
+    #[new(into)]
+    pub value: Box<Expression>,
 }
 
 #[derive(Debug, Clone)]
@@ -218,7 +246,7 @@ pub struct MemberExpr {
     #[new(into)]
     pub object: Box<Expression>,
     #[new(into)]
-    pub property: Box<Expression>,
+    pub property: Box<IdExpr>,
 }
 
 #[derive(Debug, Clone, new)]

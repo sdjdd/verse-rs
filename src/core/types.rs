@@ -21,6 +21,9 @@ pub enum TypeInfo {
     Option(Box<TypeInfo>),
     Tuple(Vec<TypeInfo>),
     Array(Box<TypeInfo>),
+    Struct {
+        id: u32,
+    },
     Function {
         params: Vec<TypeInfo>,
         ret: Box<TypeInfo>,
@@ -75,6 +78,7 @@ impl Display for TypeInfo {
                 write!(f, ")")
             }
             TypeInfo::Array(e) => write!(f, "[]{e}"),
+            TypeInfo::Struct { .. } => write!(f, "TODO(struct name)"),
             TypeInfo::Function { params, ret } => {
                 write!(f, "_(")?;
                 for (i, param) in params.iter().enumerate() {
@@ -85,7 +89,7 @@ impl Display for TypeInfo {
                 }
                 write!(f, "): {ret}")
             }
-            TypeInfo::Type(t) => write!(f, "{t}"),
+            TypeInfo::Type(t) => write!(f, "type{{{t}}}"),
             TypeInfo::Bottom => write!(f, "bottom"),
             TypeInfo::Unknown { .. } => write!(f, "unknown"),
         }

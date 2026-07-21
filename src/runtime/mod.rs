@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use derive_more::From;
 
 use crate::runtime::heap::{Heap, ObjectId};
@@ -61,6 +63,7 @@ pub enum Value {
     },
     Type(TypeId),
     Ref(ObjectId),
+    Rc(Rc<RefCell<Value>>),
 }
 
 impl Value {
@@ -104,6 +107,22 @@ impl Value {
             Value::Char32(c) => format!("{}", c),
             Value::String(s) => s,
             _ => unimplemented!(),
+        }
+    }
+
+    pub fn copy_value(&self) -> Self {
+        match self {
+            Value::Rc(rc) => {
+                let v = match &*rc.borrow() {
+                    Value::Tuple { type_id, elements } => Value::Tuple {
+                        type_id: *type_id,
+                        elements: elements.iter().map(|e| e.copy_value()).collect(),
+                    },
+                    _ => self.clone(),
+                };
+                Value::Rc(Rc::new(v.into()))
+            }
+            _ => self.clone(),
         }
     }
 }

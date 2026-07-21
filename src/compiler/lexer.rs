@@ -91,6 +91,9 @@ pub enum Token {
     #[token("=")]
     Eq,
 
+    #[token(":=")]
+    ColonEq,
+
     #[regex("[0-9]+")]
     #[regex("0x[0-9A-Fa-f]+")]
     IntegerLiteral,
@@ -154,6 +157,9 @@ pub enum Token {
 
     #[token("tuple")]
     Tuple,
+
+    #[token("struct")]
+    Struct,
 
     #[regex("[A-Za-z][A-Za-z0-9_]*")]
     #[regex("_[A-Za-z0-9_]+")]

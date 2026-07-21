@@ -73,6 +73,9 @@ impl<'a> Compiler<'a> {
             IrKind::Tuple(elems) => self.compile_collection(Opcode::MakeTuple, ir.ty, elems),
             IrKind::Array(elems) => self.compile_collection(Opcode::MakeArray, ir.ty, elems),
             IrKind::IndexTuple { tuple, index } => self.compile_index_tuple(*tuple, index),
+            IrKind::SetTupleElement { obj, index, value } => {
+                self.compile_set_tuple_element(*obj, index, *value)
+            }
             IrKind::IndexArray { array, index } => self.compile_index_array(*array, *index),
             IrKind::Add((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Add),
             IrKind::Sub((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Sub),
@@ -93,6 +96,13 @@ impl<'a> Compiler<'a> {
             IrKind::GetLength(ir) => self.compile_len(*ir),
             IrKind::Concat(irs) => self.compile_concat(irs),
             IrKind::Unwrap(ir) => self.compile_unwrap(*ir),
+            IrKind::MakeStruct { fields } => {
+                self.compile_collection(Opcode::MakeTuple, ir.ty, fields)
+            }
+            IrKind::GetStructField { obj, index } => self.compile_index_tuple(*obj, index),
+            IrKind::SetStructField { obj, index, value } => {
+                self.compile_set_tuple_element(*obj, index, *value)
+            }
         }
     }
 
@@ -243,6 +253,13 @@ impl<'a> Compiler<'a> {
         assert!(index < u8::MAX as usize);
         self.compile_ir(value);
         self.append_op(Opcode::IndexTuple, 0);
+        self.append_u8(index as u8);
+    }
+
+    fn compile_set_tuple_element(&mut self, obj: Ir, index: usize, value: Ir) {
+        self.compile_ir(value);
+        self.compile_ir(obj);
+        self.append_op(Opcode::SetTupleElement, -1);
         self.append_u8(index as u8);
     }
 

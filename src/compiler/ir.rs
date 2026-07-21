@@ -15,12 +15,27 @@ pub struct Ir {
 
 #[derive(Debug, Clone)]
 pub enum IrKind {
-    LoadGlobal { slot: Slot },
-    StoreGlobal { slot: Slot, value: Box<Ir> },
-    LoadLocal { slot: Slot },
-    StoreLocal { slot: Slot, value: Box<Ir> },
-    LoadUpvalue { index: usize },
-    StoreUpvalue { index: usize, value: Box<Ir> },
+    LoadGlobal {
+        slot: Slot,
+    },
+    StoreGlobal {
+        slot: Slot,
+        value: Box<Ir>,
+    },
+    LoadLocal {
+        slot: Slot,
+    },
+    StoreLocal {
+        slot: Slot,
+        value: Box<Ir>,
+    },
+    LoadUpvalue {
+        index: usize,
+    },
+    StoreUpvalue {
+        index: usize,
+        value: Box<Ir>,
+    },
     Int(i64),
     Float(f64),
     Char(u8),
@@ -29,9 +44,32 @@ pub enum IrKind {
     Logic(bool),
     Option(Option<Box<Ir>>),
     Tuple(Vec<Ir>),
-    IndexTuple { tuple: Box<Ir>, index: usize },
+    IndexTuple {
+        tuple: Box<Ir>,
+        index: usize,
+    },
+    SetTupleElement {
+        obj: Box<Ir>,
+        index: usize,
+        value: Box<Ir>,
+    },
     Array(Vec<Ir>),
-    IndexArray { array: Box<Ir>, index: Box<Ir> },
+    IndexArray {
+        array: Box<Ir>,
+        index: Box<Ir>,
+    },
+    MakeStruct {
+        fields: Vec<Ir>,
+    },
+    GetStructField {
+        obj: Box<Ir>,
+        index: usize,
+    },
+    SetStructField {
+        obj: Box<Ir>,
+        index: usize,
+        value: Box<Ir>,
+    },
     Call(CallIr),
     Add((Box<Ir>, Box<Ir>)),
     Sub((Box<Ir>, Box<Ir>)),
@@ -48,7 +86,10 @@ pub enum IrKind {
     Func(FunctionIr),
     Type(TypeInfo),
 
-    Cast { ty: TypeInfo, value: Box<Ir> },
+    Cast {
+        ty: TypeInfo,
+        value: Box<Ir>,
+    },
     GetLength(Box<Ir>),
     Concat(Vec<Ir>),
     Unwrap(Box<Ir>),
@@ -73,6 +114,8 @@ impl IrKind {
             | IrKind::String(_)
             | IrKind::Logic(_)
             | IrKind::Break
+            | IrKind::IndexTuple { .. }
+            | IrKind::GetStructField { .. }
             | IrKind::Type(_) => false,
 
             IrKind::StoreGlobal { value: ir, .. }
@@ -80,9 +123,10 @@ impl IrKind {
             | IrKind::StoreUpvalue { value: ir, .. }
             | IrKind::Neg(ir)
             | IrKind::Not(ir)
-            | IrKind::IndexTuple { tuple: ir, .. }
             | IrKind::Loop(ir)
-            | IrKind::GetLength(ir) => ir.kind.is_fallible(),
+            | IrKind::GetLength(ir)
+            | IrKind::SetTupleElement { value: ir, .. }
+            | IrKind::SetStructField { value: ir, .. } => ir.kind.is_fallible(),
 
             IrKind::Add((a, b)) | IrKind::Sub((a, b)) | IrKind::Mul((a, b)) => {
                 a.kind.is_fallible() || b.kind.is_fallible()
@@ -91,6 +135,11 @@ impl IrKind {
             IrKind::Tuple(irs) | IrKind::Array(irs) | IrKind::Block(irs) | IrKind::Concat(irs) => {
                 irs.iter().any(|ir| ir.kind.is_fallible())
             }
+
+            IrKind::MakeStruct {
+                fields: provided_fields,
+                ..
+            } => provided_fields.iter().any(|ir| ir.kind.is_fallible()),
 
             IrKind::Option(v) => v.as_ref().is_some_and(|ir| ir.kind.is_fallible()),
             IrKind::If(e) => {

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use derive_more::Constructor;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
@@ -58,6 +60,7 @@ pub enum Opcode {
     MakeArray,
 
     IndexTuple,
+    SetTupleElement,
     IndexArray,
 
     ToString,
@@ -128,7 +131,7 @@ impl Vm {
     pub fn run(&mut self, func_id: usize) {
         self.frames.push(Frame {
             func_id,
-            stack_base: 0,
+            stack_base: self.stack.len(),
             pc: 0,
             upvalues: vec![],
         });
@@ -250,6 +253,7 @@ impl Vm {
             Opcode::MakeArray => self.exec_make_array(),
             Opcode::MakeClosure => self.exec_make_closure(),
             Opcode::IndexTuple => self.exec_index_tuple(),
+            Opcode::SetTupleElement => self.exec_set_tuple_element(),
             Opcode::IndexArray => self.exec_index_array(),
             Opcode::Add => self.exec_add(),
             Opcode::Sub => self.exec_sub(),
@@ -303,6 +307,27 @@ impl Vm {
         value
     }
 
+    fn get_value_type<'a>(&'a self, value: &Value) -> TypeId {
+        match value {
+            Value::Void => self.predefined_types.t_void,
+            Value::Integer(_) => self.predefined_types.t_int,
+            Value::Rational(..) => self.predefined_types.t_rational,
+            Value::Float(_) => self.predefined_types.t_float,
+            Value::Char(_) => self.predefined_types.t_char,
+            Value::Char32(_) => self.predefined_types.t_char32,
+            Value::String(_) => self.predefined_types.t_string,
+            Value::False => self.predefined_types.t_false,
+            Value::Logic(_) => self.predefined_types.t_logic,
+            Value::Option { type_id, .. }
+            | Value::Tuple { type_id, .. }
+            | Value::Array { type_id, .. }
+            | Value::Function { type_id, .. }
+            | Value::Type(type_id) => *type_id,
+            Value::Ref(obj_id) => self.get_value_type(self.heap.fetch_obj(*obj_id)),
+            Value::Rc(rc) => self.get_value_type(&*rc.borrow()),
+        }
+    }
+
     fn exec_push_void(&mut self) {
         self.op_stack.push(Value::Void);
     }
@@ -332,8 +357,7 @@ impl Vm {
         let str = match &self.const_table[index] {
             ConstValue::String(s) => s.to_owned(),
         };
-        let val = Value::String(str);
-        let obj_id = self.heap.alloc_obj(val);
+        let obj_id = self.heap.alloc_obj(Value::String(str));
         self.op_stack.push(Value::Ref(obj_id));
     }
 
@@ -355,7 +379,7 @@ impl Vm {
     }
 
     fn exec_store_local(&mut self) {
-        let value = self.op_stack.last().unwrap().clone();
+        let value = self.op_stack.last().unwrap().copy_value();
         let base = self.frames.last().unwrap().stack_base;
         let offset = self.read_u32() as usize;
         let index = base + offset;
@@ -371,7 +395,7 @@ impl Vm {
     }
 
     fn exec_store_global(&mut self) {
-        let value = self.op_stack.last().unwrap().clone();
+        let value = self.op_stack.last().unwrap().copy_value();
         let index = self.read_u32() as usize;
         self.set_stack_value(index, value);
     }
@@ -383,7 +407,7 @@ impl Vm {
     }
 
     fn exec_store_upvalue(&mut self) {
-        let value = self.op_stack.last().unwrap().clone();
+        let value = self.op_stack.last().unwrap().copy_value();
         let index = self.read_u32() as usize;
         let obj_id = self.frames.last().unwrap().upvalues[index];
         self.heap.update_obj(obj_id, value);
@@ -411,6 +435,7 @@ impl Vm {
         let start = self.op_stack.len() - elem_cnt as usize;
         let elements = self.op_stack.split_off(start);
         let value = Value::Tuple { type_id, elements };
+        let value = Value::Rc(Rc::new(value.into()));
         self.op_stack.push(value);
     }
 
@@ -428,11 +453,29 @@ impl Vm {
 
     fn exec_index_tuple(&mut self) {
         let elem_idx = self.read_byte() as usize;
-        let elems = match self.op_stack.pop().unwrap() {
-            Value::Tuple { elements, .. } => elements,
+        let value = match self.op_stack.pop().unwrap() {
+            Value::Rc(v) => match &*v.borrow() {
+                Value::Tuple { elements, .. } => elements[elem_idx].clone(),
+                _ => unreachable!(),
+            },
             _ => unreachable!(),
         };
-        self.op_stack.push(elems[elem_idx].clone());
+        self.op_stack.push(value);
+    }
+
+    fn exec_set_tuple_element(&mut self) {
+        let elem_idx = self.read_byte() as usize;
+        let tuple = self.op_stack.pop().unwrap();
+        let elem = self.op_stack.last().unwrap().copy_value();
+        match tuple {
+            Value::Rc(rc) => match &mut *rc.borrow_mut() {
+                Value::Tuple { elements, .. } => {
+                    elements[elem_idx] = elem;
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
     }
 
     fn exec_index_array(&mut self) {
@@ -663,27 +706,8 @@ impl Vm {
     fn exec_cast(&mut self) {
         let expect = TypeId(self.read_u32());
         let value = self.op_stack.last().unwrap();
-        let value = self.resolve_ref(value);
-        let ok = match value {
-            Value::Void => expect == self.predefined_types.t_void,
-            Value::Integer(_) => expect == self.predefined_types.t_int,
-            Value::Rational(..) => expect == self.predefined_types.t_rational,
-            Value::Float(_) => expect == self.predefined_types.t_float,
-            Value::Char(_) => expect == self.predefined_types.t_char,
-            Value::Char32(_) => expect == self.predefined_types.t_char32,
-            Value::String(_) => expect == self.predefined_types.t_string,
-            Value::False => expect == self.predefined_types.t_false,
-            Value::Logic(_) => expect == self.predefined_types.t_logic,
-            Value::Option { type_id, .. } => expect == *type_id,
-            Value::Tuple { type_id, .. } => expect == *type_id,
-            Value::Array { type_id, .. } => expect == *type_id,
-            Value::Function { type_id, .. } => expect == *type_id,
-            Value::Type(type_id) => expect == *type_id,
-            Value::Ref(_) => unreachable!(),
-        };
-        if !ok {
-            self.has_pending_failure = true;
-        }
+        let type_id = self.get_value_type(value);
+        self.has_pending_failure = expect != type_id
     }
 
     fn exec_len(&mut self) {
