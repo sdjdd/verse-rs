@@ -753,7 +753,7 @@ impl<'a> SemanticAnalyzer<'a> {
         })
     }
 
-    fn lower_template_expr(&mut self, span: Span, expr: &TemplateExpression) -> Option<Ir> {
+    fn lower_template_expr(&mut self, span: Span, expr: &TemplateExpr) -> Option<Ir> {
         let mut elements = Vec::with_capacity(expr.elements.len());
         for el in expr.elements.iter() {
             match el {

@@ -30,7 +30,7 @@ pub enum ExprKind {
     If(IfExpr),
     Loop(Box<Expression>),
     Break,
-    Template(TemplateExpression),
+    Template(TemplateExpr),
     CompareChain(CompareChainExpr),
     Tuple(TupleExpr),
     Block(BlockExpr),
@@ -198,7 +198,7 @@ pub enum TemplateElement {
 }
 
 #[derive(Debug, Clone, Constructor)]
-pub struct TemplateExpression {
+pub struct TemplateExpr {
     pub elements: Vec<TemplateElement>,
 }
 

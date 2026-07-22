@@ -877,7 +877,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(Expression::new(
             self.gen_expr_id(),
             start..self.span().end,
-            TemplateExpression::new(elements),
+            TemplateExpr::new(elements),
         ))
     }
 
