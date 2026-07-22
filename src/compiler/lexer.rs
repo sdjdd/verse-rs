@@ -176,14 +176,14 @@ pub enum Token {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum IndentType {
+enum IndentKind {
     Space,
     Tab,
 }
 
 #[derive(Clone)]
 struct IndentInfo {
-    typ: IndentType,
+    kind: IndentKind,
     span: Span,
 }
 
@@ -245,15 +245,15 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                 }
                 Token::Whitespaces | Token::Tabs => {
                     if self.at_line_start {
-                        let new_typ = match token {
-                            Token::Whitespaces => IndentType::Space,
-                            Token::Tabs => IndentType::Tab,
+                        let new_kind = match token {
+                            Token::Whitespaces => IndentKind::Space,
+                            Token::Tabs => IndentKind::Tab,
                             _ => unreachable!(),
                         };
 
                         if let Some(indent) = &self.current_indent {
                             // Check for inconsistency with existing indent
-                            if indent.typ != new_typ {
+                            if indent.kind != new_kind {
                                 self.has_error = true;
                                 return Some(Err(LexerError::InconsistentIndent(span)));
                             }
@@ -262,15 +262,15 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
                         } else {
                             // First whitespace on this line
                             self.current_indent = Some(IndentInfo {
-                                typ: new_typ,
+                                kind: new_kind,
                                 span: span.clone(),
                             });
                         }
                     } else if let Some(indent) = self.current_indent.as_mut() {
                         indent.span.end = span.end;
-                        match (indent.typ, token) {
-                            (IndentType::Space, Token::Tabs)
-                            | (IndentType::Tab, Token::Whitespaces) => {
+                        match (indent.kind, token) {
+                            (IndentKind::Space, Token::Tabs)
+                            | (IndentKind::Tab, Token::Whitespaces) => {
                                 self.has_error = true;
                                 return Some(Err(LexerError::InconsistentIndent(span)));
                             }
@@ -293,7 +293,7 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
 
                             if current_size > last_size {
                                 self.indent_stack.push(IndentInfo {
-                                    typ: current_indent.typ,
+                                    kind: current_indent.kind,
                                     span: current_indent.span.clone(),
                                 });
                                 self.pending

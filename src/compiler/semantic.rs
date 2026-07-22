@@ -881,7 +881,7 @@ impl<'a> SemanticAnalyzer<'a> {
         let param_types: Vec<_> = expr
             .params
             .iter()
-            .map(|p| self.parse_type_expr(&p.typ))
+            .map(|p| self.parse_type_expr(&p.ty))
             .collect();
 
         let mut effects = Effects { decides: false };

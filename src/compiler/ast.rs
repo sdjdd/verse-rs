@@ -240,7 +240,7 @@ pub struct BlockExpr {
 #[derive(Debug, Clone, Constructor)]
 pub struct FunctionParam {
     pub name: Symbol,
-    pub typ: TypeExpr,
+    pub ty: TypeExpr,
 }
 
 #[derive(Debug, Clone, new)]
