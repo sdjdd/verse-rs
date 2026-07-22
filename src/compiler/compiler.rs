@@ -3,8 +3,8 @@ use crate::{
         ConstId,
         types::{PredefinedTypes, TypeInfo, TypeRegistry},
     },
-    runtime::TypeId,
-    vm::{FailureHandler, Function, Opcode},
+    runtime::{FunctionId, TypeId},
+    vm::{self, FailureHandler, Function, Opcode},
 };
 
 use super::ast::CompareOp;
@@ -13,6 +13,10 @@ use super::ir::*;
 #[derive(Default)]
 struct LoopContext {
     break_jmp_target_indices: Vec<u32>,
+}
+
+pub struct Class {
+    pub methods: Vec<Ir>,
 }
 
 pub struct Compiler<'a> {
@@ -25,6 +29,8 @@ pub struct Compiler<'a> {
     base_fn_id: usize,
     type_registry: &'a mut TypeRegistry,
     predefined_types: PredefinedTypes,
+    classes: Vec<Class>,
+    pub compiled_classes: Vec<vm::Class>,
 }
 
 impl<'a> Compiler<'a> {
@@ -38,10 +44,13 @@ impl<'a> Compiler<'a> {
             loop_ctx_stack: vec![],
             functions: vec![],
             base_fn_id: 0,
+            classes: vec![],
+            compiled_classes: vec![],
         }
     }
 
-    pub fn compile(&mut self, irs: Vec<Ir>) {
+    pub fn compile(&mut self, irs: Vec<Ir>, classes: Vec<Class>) {
+        self.classes = classes;
         for ir in irs {
             self.compile_ir(ir);
             self.append_op(Opcode::Pop, -1);
@@ -57,6 +66,7 @@ impl<'a> Compiler<'a> {
 
     pub fn compile_ir(&mut self, ir: Ir) {
         match ir.kind {
+            IrKind::Invalid => panic!("cannot compile invalid IR"),
             IrKind::Int(v) => self.compile_int(v),
             IrKind::Float(v) => self.compile_float(v),
             IrKind::Char(v) => self.compile_char(v),
@@ -76,7 +86,10 @@ impl<'a> Compiler<'a> {
             IrKind::SetTupleElement { obj, index, value } => {
                 self.compile_set_tuple_element(*obj, index, *value)
             }
-            IrKind::IndexArray { array, index } => self.compile_index_array(*array, *index),
+            IrKind::LoadArrayElement { array, index } => self.compile_index_array(*array, *index),
+            IrKind::StoreArrayElement { obj, index, value } => {
+                self.compile_set_array_element(*obj, *index, *value)
+            }
             IrKind::Add((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Add),
             IrKind::Sub((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Sub),
             IrKind::Mul((lhs, rhs)) => self.compile_bin_op(*lhs, *rhs, Opcode::Mul),
@@ -88,7 +101,10 @@ impl<'a> Compiler<'a> {
             IrKind::Loop(ir) => self.compile_loop(*ir),
             IrKind::Break => self.compile_break(),
             IrKind::Block(irs) => self.compile_block(irs),
-            IrKind::Func(fn_ir) => self.compile_function(fn_ir, ir.ty),
+            IrKind::Func(fn_ir) => {
+                let func_id = self.compile_function(fn_ir, ir.ty);
+                self.compile_make_closure(func_id as u32);
+            }
             IrKind::Call(ir) => self.compile_call(*ir.callee, ir.args),
             IrKind::Template(elems) => self.compile_template(elems),
             IrKind::Type(type_id) => self.compile_type_literal(type_id),
@@ -103,6 +119,18 @@ impl<'a> Compiler<'a> {
             IrKind::SetStructField { obj, index, value } => {
                 self.compile_set_tuple_element(*obj, index, *value)
             }
+            IrKind::MakeObject {
+                class_id, fields, ..
+            } => self.compile_make_object(ir.ty, class_id, fields),
+            IrKind::LoadObjectField { obj, index } => self.compile_load_object_field(*obj, index),
+            IrKind::StoreObjectField { obj, index, value } => {
+                self.compile_store_object_field(*obj, index, *value)
+            }
+            IrKind::Method {
+                obj,
+                class_id,
+                method_id,
+            } => self.compile_method(*obj, class_id, method_id),
         }
     }
 
@@ -252,21 +280,28 @@ impl<'a> Compiler<'a> {
     fn compile_index_tuple(&mut self, value: Ir, index: usize) {
         assert!(index < u8::MAX as usize);
         self.compile_ir(value);
-        self.append_op(Opcode::IndexTuple, 0);
+        self.append_op(Opcode::LoadTupleElement, 0);
         self.append_u8(index as u8);
     }
 
     fn compile_set_tuple_element(&mut self, obj: Ir, index: usize, value: Ir) {
         self.compile_ir(value);
         self.compile_ir(obj);
-        self.append_op(Opcode::SetTupleElement, -1);
+        self.append_op(Opcode::StoreTupleElement, -1);
         self.append_u8(index as u8);
     }
 
-    fn compile_index_array(&mut self, value: Ir, index: Ir) {
-        self.compile_ir(value);
+    fn compile_index_array(&mut self, array: Ir, index: Ir) {
+        self.compile_ir(array);
         self.compile_ir(index);
-        self.append_op(Opcode::IndexArray, 0);
+        self.append_op(Opcode::LoadArrayElement, 0);
+    }
+
+    fn compile_set_array_element(&mut self, array: Ir, index: Ir, value: Ir) {
+        self.compile_ir(value);
+        self.compile_ir(array);
+        self.compile_ir(index);
+        self.append_op(Opcode::StoreArrayElement, -2);
     }
 
     fn compile_bin_op(&mut self, lhs: Ir, rhs: Ir, op: Opcode) {
@@ -366,7 +401,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_function(&mut self, fn_ir: FunctionIr, fn_type: TypeInfo) {
+    fn compile_function(&mut self, fn_ir: FunctionIr, fn_type: TypeInfo) -> usize {
         let type_id = self.intern_type(fn_type);
 
         let mut compiler = Compiler::new(self.type_registry, self.predefined_types);
@@ -387,10 +422,7 @@ impl<'a> Compiler<'a> {
         let fn_id = self.base_fn_id + self.functions.len();
         self.functions.push(func);
 
-        self.append_op(Opcode::MakeClosure, 1);
-        self.append_u32(fn_id as u32);
-        self.append_op(Opcode::StoreLocal, 0);
-        self.append_u32(fn_ir.slot.0 as u32);
+        fn_id
     }
 
     fn compile_call(&mut self, callee: Ir, args: Vec<Ir>) {
@@ -432,6 +464,24 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_type_literal(&mut self, type_info: TypeInfo) {
+        match &type_info {
+            TypeInfo::Class { id } => {
+                let class = &self.classes[*id as usize];
+                let mut function_ids = Vec::with_capacity(class.methods.len());
+                for method in class.methods.clone() {
+                    if let IrKind::Func(func_ir) = method.kind {
+                        let func_id = self.compile_function(func_ir, method.ty);
+                        function_ids.push(FunctionId(func_id));
+                    }
+                }
+                assert_eq!(self.compiled_classes.len(), *id as usize);
+                self.compiled_classes.push(vm::Class {
+                    methods: function_ids,
+                })
+            }
+            _ => {}
+        }
+
         let type_id = self.intern_type(type_info);
         self.append_op(Opcode::PushType, 1);
         self.append_u32(type_id.0 as u32);
@@ -452,5 +502,50 @@ impl<'a> Compiler<'a> {
     fn compile_unwrap(&mut self, value: Ir) {
         self.compile_ir(value);
         self.append_op(Opcode::Unwrap, 0);
+    }
+
+    fn compile_make_closure(&mut self, func_id: u32) {
+        self.append_op(Opcode::MakeClosure, 1);
+        self.append_u32(func_id);
+    }
+
+    fn compile_make_object(&mut self, type_info: TypeInfo, class_id: u32, fields: Vec<Ir>) {
+        let field_count = fields.len() as i16;
+        for field in fields {
+            self.compile_ir(field);
+        }
+
+        let methods = &self.compiled_classes[class_id as usize].methods.clone();
+        let method_count = methods.len();
+        for func_id in methods {
+            self.compile_make_closure(func_id.0 as u32);
+        }
+
+        let type_id = self.type_registry.intern(type_info);
+        self.append_op(Opcode::MakeObject, -field_count + 1);
+        self.append_u32(type_id.0);
+        self.append_u32(class_id);
+        self.append_u32(field_count as u32);
+        self.append_u32(method_count as u32);
+    }
+
+    fn compile_load_object_field(&mut self, obj: Ir, index: usize) {
+        self.compile_ir(obj);
+        self.append_op(Opcode::LoadObjectField, 0);
+        self.append_u32(index as u32);
+    }
+
+    fn compile_store_object_field(&mut self, obj: Ir, index: usize, value: Ir) {
+        self.compile_ir(value);
+        self.compile_ir(obj);
+        self.append_op(Opcode::StoreObjectField, -1);
+        self.append_u32(index as u32);
+    }
+
+    fn compile_method(&mut self, obj: Ir, class_id: u32, method_id: u32) {
+        self.compile_ir(obj);
+        self.append_op(Opcode::PushMethod, 0);
+        self.append_u32(class_id);
+        self.append_u32(method_id);
     }
 }

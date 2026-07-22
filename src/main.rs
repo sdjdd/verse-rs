@@ -32,6 +32,7 @@ fn main() {
                 outcome.global_symbol_slots,
             );
             vm.functions = outcome.functions;
+            vm.classes = outcome.classes;
             vm.run(outcome.entry);
         }
         Err(errors) => {

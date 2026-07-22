@@ -43,12 +43,22 @@ pub fn write_value(
             }
             write!(w, "]")
         }
-        Value::Function { .. } => write!(w, "[Function]"),
+        Value::Object { fields, .. } => {
+            write!(w, "{{ ")?;
+            for (i, v) in fields.iter().enumerate() {
+                if i > 0 {
+                    write!(w, ", ")?;
+                }
+                write_value(w, heap, v, true)?;
+            }
+            write!(w, " }}")
+        }
+        Value::Function { .. } | Value::Method { .. } => write!(w, "[Function]"),
         Value::Type { .. } => write!(w, "[Type]"),
         Value::Option { value, .. } => {
             if let Some(value) = value {
                 write!(w, "option{{")?;
-                write_value(w, heap, value, quote_string)?;
+                write_value(w, heap, value, true)?;
                 write!(w, "}}")
             } else {
                 write!(w, "option{{}}")

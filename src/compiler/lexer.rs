@@ -161,6 +161,9 @@ pub enum Token {
     #[token("struct")]
     Struct,
 
+    #[token("class")]
+    Class,
+
     #[regex("[A-Za-z][A-Za-z0-9_]*")]
     #[regex("_[A-Za-z0-9_]+")]
     Id,

@@ -27,6 +27,7 @@ pub enum Opcode {
     PushFalse,
     PushNone,
     PushType,
+    PushMethod,
 
     Add,
     Sub,
@@ -58,10 +59,14 @@ pub enum Opcode {
     MakeTuple,
     MakeClosure,
     MakeArray,
+    MakeObject,
+    LoadObjectField,
+    StoreObjectField,
 
-    IndexTuple,
-    SetTupleElement,
-    IndexArray,
+    LoadTupleElement,
+    StoreTupleElement,
+    LoadArrayElement,
+    StoreArrayElement,
 
     ToString,
     Concat,
@@ -102,6 +107,10 @@ struct Frame {
     upvalues: Vec<ObjectId>,
 }
 
+pub struct Class {
+    pub methods: Vec<FunctionId>,
+}
+
 pub struct Vm<H: Heap = SimpleHeap> {
     op_stack: Vec<Value>,
     stack: Vec<Value>,
@@ -110,6 +119,7 @@ pub struct Vm<H: Heap = SimpleHeap> {
     const_table: Vec<ConstValue>,
     predefined_types: PredefinedTypes,
     pub functions: Vec<Function>,
+    pub classes: Vec<Class>,
 
     has_pending_failure: bool,
 }
@@ -124,6 +134,7 @@ impl Vm {
             const_table,
             predefined_types,
             functions: vec![],
+            classes: vec![],
             has_pending_failure: false,
         }
     }
@@ -180,6 +191,7 @@ impl Vm {
             }
         }
 
+        assert_eq!(self.op_stack.len(), 0);
         assert_eq!(self.op_stack.pop(), None);
     }
 
@@ -242,6 +254,7 @@ impl Vm {
             Opcode::PushFalse => self.exec_push_logic(false),
             Opcode::PushNone => self.exec_push_none(),
             Opcode::PushType => self.exec_push_type(),
+            Opcode::PushMethod => self.exec_push_method(),
             Opcode::StoreLocal => self.exec_store_local(),
             Opcode::LoadLocal => self.exec_load_local(),
             Opcode::StoreGlobal => self.exec_store_global(),
@@ -252,9 +265,11 @@ impl Vm {
             Opcode::MakeTuple => self.exec_make_tuple(),
             Opcode::MakeArray => self.exec_make_array(),
             Opcode::MakeClosure => self.exec_make_closure(),
-            Opcode::IndexTuple => self.exec_index_tuple(),
-            Opcode::SetTupleElement => self.exec_set_tuple_element(),
-            Opcode::IndexArray => self.exec_index_array(),
+            Opcode::MakeObject => self.exec_make_object(),
+            Opcode::LoadTupleElement => self.exec_index_tuple(),
+            Opcode::StoreTupleElement => self.exec_set_tuple_element(),
+            Opcode::LoadArrayElement => self.exec_index_array(),
+            Opcode::StoreArrayElement => self.exec_set_array_element(),
             Opcode::Add => self.exec_add(),
             Opcode::Sub => self.exec_sub(),
             Opcode::Mul => self.exec_mul(),
@@ -276,6 +291,8 @@ impl Vm {
             Opcode::Cast => self.exec_cast(),
             Opcode::Len => self.exec_len(),
             Opcode::Unwrap => self.exec_unwrap(),
+            Opcode::LoadObjectField => self.exec_load_object_field(),
+            Opcode::StoreObjectField => self.exec_store_object_field(),
         }
     }
 
@@ -285,6 +302,7 @@ impl Vm {
         } else if index == self.stack.len() {
             self.stack.push(value);
         } else {
+            println!("index={}, value={:?}", index, value);
             panic!("stack slot must be allocated continuously")
         }
     }
@@ -320,7 +338,9 @@ impl Vm {
             Value::Option { type_id, .. }
             | Value::Tuple { type_id, .. }
             | Value::Array { type_id, .. }
+            | Value::Object { type_id, .. }
             | Value::Function { type_id, .. }
+            | Value::Method { type_id, .. }
             | Value::Type(type_id) => *type_id,
             Value::Ref(obj_id) => self.get_value_type(self.heap.fetch_obj(*obj_id)),
             Value::Rc(rc) => self.get_value_type(&*rc.borrow()),
@@ -375,6 +395,22 @@ impl Vm {
     fn exec_push_type(&mut self) {
         let type_id = self.read_u32();
         self.op_stack.push(Value::Type(TypeId(type_id)));
+    }
+
+    fn exec_push_method(&mut self) {
+        let obj = self.op_stack.pop().unwrap();
+        let class_id = self.read_u32() as usize;
+        let method_id = self.read_u32() as usize;
+        let func_id = self.classes[class_id].methods[method_id];
+        let type_id = self.functions[func_id.0].type_id;
+        self.op_stack.push(Value::Method {
+            type_id,
+            obj: obj.into(),
+            func_kind: FnKind::Verse {
+                id: func_id,
+                upvalues: vec![],
+            },
+        });
     }
 
     fn exec_store_local(&mut self) {
@@ -443,11 +479,11 @@ impl Vm {
         let elem_cnt = self.read_u32();
         let start = self.op_stack.len() - elem_cnt as usize;
         let elements = self.op_stack.split_off(start);
-        let value = Value::Array {
+        let obj_id = self.heap.alloc_obj(Value::Array {
             type_id: TypeId(type_id),
             elements,
-        };
-        self.op_stack.push(value);
+        });
+        self.op_stack.push(Value::Ref(obj_id));
     }
 
     fn exec_index_tuple(&mut self) {
@@ -482,17 +518,41 @@ impl Vm {
             Value::Integer(v) => v,
             _ => unreachable!(),
         };
-        let value = match &self.op_stack.pop().unwrap() {
-            Value::Array { elements, .. } => {
-                if index < 0 || (index as usize) >= elements.len() {
-                    self.has_pending_failure = true;
-                    return;
+        match &self.op_stack.pop().unwrap() {
+            Value::Ref(obj_id) => match self.heap.fetch_obj(*obj_id) {
+                Value::Array { elements, .. } => {
+                    if index >= 0 && (index as usize) < elements.len() {
+                        self.op_stack.push(elements[index as usize].clone());
+                    } else {
+                        self.has_pending_failure = true
+                    }
                 }
-                elements[index as usize].clone()
-            }
+                _ => unreachable!(),
+            },
             _ => unreachable!(),
         };
-        self.op_stack.push(value);
+    }
+
+    fn exec_set_array_element(&mut self) {
+        let index = match self.op_stack.pop().unwrap() {
+            Value::Integer(v) => v,
+            _ => unreachable!(),
+        };
+        let array_ref = self.op_stack.pop().unwrap();
+        let value = self.op_stack.last().unwrap().copy_value();
+        match array_ref {
+            Value::Ref(obj_id) => match self.heap.fetch_obj_mut(obj_id) {
+                Value::Array { elements, .. } => {
+                    if index >= 0 && (index as usize) < elements.len() {
+                        elements[index as usize] = value;
+                    } else {
+                        self.has_pending_failure = true
+                    }
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
     }
 
     fn exec_add(&mut self) {
@@ -635,14 +695,59 @@ impl Vm {
         self.op_stack.push(Value::Ref(obj_id));
     }
 
+    fn exec_make_object(&mut self) {
+        let type_id = self.read_u32();
+        let class_id = self.read_u32();
+        let field_count = self.read_u32() as usize;
+        let method_count = self.read_u32() as usize;
+        let methods = self.op_stack.split_off(self.op_stack.len() - method_count);
+        let fields = self.op_stack.split_off(self.op_stack.len() - field_count);
+        let obj_id = self.heap.alloc_obj(Value::Object {
+            type_id: TypeId(type_id),
+            class_id,
+            fields,
+            methods,
+        });
+        self.op_stack.push(Value::Ref(obj_id));
+    }
+
+    fn exec_load_object_field(&mut self) {
+        let obj = self.op_stack.pop().unwrap();
+        let field_index = self.read_u32() as usize;
+        match obj {
+            Value::Ref(obj_id) => match self.heap.fetch_obj(obj_id) {
+                Value::Object { fields, .. } => self.op_stack.push(fields[field_index].clone()),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn exec_store_object_field(&mut self) {
+        let obj = self.op_stack.pop().unwrap();
+        let value = self.op_stack.last().unwrap().copy_value();
+        let field_index = self.read_u32() as usize;
+        match obj {
+            Value::Ref(obj_id) => match self.heap.fetch_obj_mut(obj_id) {
+                Value::Object { fields, .. } => {
+                    fields[field_index] = value;
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
     fn exec_call(&mut self) {
         let argc = self.read_u32();
         let args = self.op_stack.split_off(self.op_stack.len() - argc as usize);
-        let func = match self.op_stack.pop().unwrap() {
+        let callee = self.op_stack.pop().unwrap();
+        let func = match callee {
             Value::Ref(obj_id) => match self.heap.fetch_obj(obj_id) {
                 Value::Function { kind, .. } => kind,
                 _ => unreachable!(),
             },
+            Value::Method { ref func_kind, .. } => func_kind,
             _ => unreachable!(),
         };
         match func {

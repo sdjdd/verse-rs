@@ -23,6 +23,9 @@ pub enum TypeInfo {
     Struct {
         id: u32,
     },
+    Class {
+        id: u32,
+    },
     Function {
         params: Vec<TypeInfo>,
         ret: Box<TypeInfo>,
@@ -77,6 +80,7 @@ impl Display for TypeInfo {
             }
             TypeInfo::Array(e) => write!(f, "[]{e}"),
             TypeInfo::Struct { .. } => write!(f, "TODO(struct name)"),
+            TypeInfo::Class { .. } => write!(f, "TODO(class name)"),
             TypeInfo::Function { params, ret } => {
                 write!(f, "_(")?;
                 for (i, param) in params.iter().enumerate() {

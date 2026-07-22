@@ -6,6 +6,7 @@ pub struct ObjectId(pub(crate) usize);
 pub trait Heap {
     fn alloc_obj(&mut self, obj: Value) -> ObjectId;
     fn fetch_obj(&self, id: ObjectId) -> &Value;
+    fn fetch_obj_mut(&mut self, id: ObjectId) -> &mut Value;
     fn update_obj(&mut self, id: ObjectId, obj: Value);
 }
 
@@ -28,6 +29,10 @@ impl Heap for SimpleHeap {
 
     fn fetch_obj(&self, id: ObjectId) -> &Value {
         &self.arena[id.0]
+    }
+
+    fn fetch_obj_mut(&mut self, id: ObjectId) -> &mut Value {
+        &mut self.arena[id.0]
     }
 
     fn update_obj(&mut self, id: ObjectId, obj: Value) {

@@ -56,9 +56,20 @@ pub enum Value {
         type_id: TypeId,
         elements: Vec<Value>,
     },
+    Object {
+        type_id: TypeId,
+        class_id: u32,
+        fields: Vec<Value>,
+        methods: Vec<Value>,
+    },
     Function {
         type_id: TypeId,
         kind: FnKind,
+    },
+    Method {
+        type_id: TypeId,
+        obj: Box<Value>,
+        func_kind: FnKind,
     },
     Type(TypeId),
     Ref(ObjectId),

@@ -15,6 +15,7 @@ pub struct Ir {
 
 #[derive(Debug, Clone)]
 pub enum IrKind {
+    Invalid,
     LoadGlobal {
         slot: Slot,
     },
@@ -54,9 +55,14 @@ pub enum IrKind {
         value: Box<Ir>,
     },
     Array(Vec<Ir>),
-    IndexArray {
+    LoadArrayElement {
         array: Box<Ir>,
         index: Box<Ir>,
+    },
+    StoreArrayElement {
+        obj: Box<Ir>,
+        index: Box<Ir>,
+        value: Box<Ir>,
     },
     MakeStruct {
         fields: Vec<Ir>,
@@ -69,6 +75,24 @@ pub enum IrKind {
         obj: Box<Ir>,
         index: usize,
         value: Box<Ir>,
+    },
+    MakeObject {
+        class_id: u32,
+        fields: Vec<Ir>,
+    },
+    LoadObjectField {
+        obj: Box<Ir>,
+        index: usize,
+    },
+    StoreObjectField {
+        obj: Box<Ir>,
+        index: usize,
+        value: Box<Ir>,
+    },
+    Method {
+        obj: Box<Ir>,
+        class_id: u32,
+        method_id: u32,
     },
     Call(CallIr),
     Add((Box<Ir>, Box<Ir>)),
@@ -101,10 +125,12 @@ impl IrKind {
             IrKind::Cast { .. }
             | IrKind::Div(_)
             | IrKind::CompareChain(_)
-            | IrKind::IndexArray { .. }
+            | IrKind::LoadArrayElement { .. }
+            | IrKind::StoreArrayElement { .. }
             | IrKind::Unwrap(_) => true,
 
-            IrKind::LoadLocal { .. }
+            IrKind::Invalid
+            | IrKind::LoadLocal { .. }
             | IrKind::LoadGlobal { .. }
             | IrKind::LoadUpvalue { .. }
             | IrKind::Int(_)
@@ -116,6 +142,8 @@ impl IrKind {
             | IrKind::Break
             | IrKind::IndexTuple { .. }
             | IrKind::GetStructField { .. }
+            | IrKind::LoadObjectField { .. }
+            | IrKind::Method { .. }
             | IrKind::Type(_) => false,
 
             IrKind::StoreGlobal { value: ir, .. }
@@ -126,7 +154,8 @@ impl IrKind {
             | IrKind::Loop(ir)
             | IrKind::GetLength(ir)
             | IrKind::SetTupleElement { value: ir, .. }
-            | IrKind::SetStructField { value: ir, .. } => ir.kind.is_fallible(),
+            | IrKind::SetStructField { value: ir, .. }
+            | IrKind::StoreObjectField { value: ir, .. } => ir.kind.is_fallible(),
 
             IrKind::Add((a, b)) | IrKind::Sub((a, b)) | IrKind::Mul((a, b)) => {
                 a.kind.is_fallible() || b.kind.is_fallible()
@@ -136,10 +165,9 @@ impl IrKind {
                 irs.iter().any(|ir| ir.kind.is_fallible())
             }
 
-            IrKind::MakeStruct {
-                fields: provided_fields,
-                ..
-            } => provided_fields.iter().any(|ir| ir.kind.is_fallible()),
+            IrKind::MakeStruct { fields: irs, .. } | IrKind::MakeObject { fields: irs, .. } => {
+                irs.iter().any(|ir| ir.kind.is_fallible())
+            }
 
             IrKind::Option(v) => v.as_ref().is_some_and(|ir| ir.kind.is_fallible()),
             IrKind::If(e) => {
@@ -148,7 +176,7 @@ impl IrKind {
                     || e.alt.as_ref().is_some_and(|e| e.kind.is_fallible())
             }
 
-            IrKind::Func(func) => func.effects.decides,
+            IrKind::Func(func) => func.effects.decides, // TODO: function decl not fallible, call does
             IrKind::Call(e) => e.callee.kind.is_fallible(),
 
             IrKind::Template(elems) => elems.iter().any(|e| match e {
@@ -204,7 +232,6 @@ pub struct Effects {
 
 #[derive(Debug, Clone)]
 pub struct FunctionIr {
-    pub slot: Slot,
     pub params: Vec<Slot>,
     pub effects: Effects,
     pub body: Box<Ir>,

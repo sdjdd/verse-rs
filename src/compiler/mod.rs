@@ -12,7 +12,7 @@ use crate::{
         ConstValue, PredefinedSymbols, Symbol, SymbolRegistry,
         types::{PredefinedTypes, TypeRegistry},
     },
-    vm::Function,
+    vm::{self, Function},
 };
 
 pub mod ast;
@@ -77,6 +77,7 @@ pub struct CompileOutcome {
     pub predefined_types: PredefinedTypes,
     pub global_symbol_slots: HashMap<Symbol, usize>,
     pub functions: Vec<Function>,
+    pub classes: Vec<vm::Class>,
     pub entry: usize,
 }
 
@@ -106,13 +107,23 @@ pub fn compile(src: &str) -> Result<CompileOutcome, Vec<CompileError>> {
     let mut type_registry = TypeRegistry::new();
     let predefined_types = PredefinedTypes::install(&mut type_registry);
     let mut compiler = Compiler::new(&mut type_registry, predefined_types);
-    compiler.compile(root_irs);
+    let global_symbol_slots = analyzer.get_global_symbol_slots();
+    let classes: Vec<_> = analyzer
+        .classes
+        .into_iter()
+        .map(|c| compiler::Class {
+            methods: c.methods.into_values().collect(),
+        })
+        .collect();
+
+    compiler.compile(root_irs, classes);
 
     Ok(CompileOutcome {
         const_table: const_pool.into_vec(),
-        global_symbol_slots: analyzer.get_global_symbol_slots(),
+        global_symbol_slots,
         entry: compiler.functions.len() - 1,
         functions: compiler.functions,
+        classes: compiler.compiled_classes,
         symbol_table,
         type_registry,
         predefined_types,

@@ -77,6 +77,9 @@ pub enum SemanticErrorKind {
         struct_name: Option<String>,
         field_name: String,
     },
+
+    #[error("missing {}", .missing_members.iter().map(|v| format!("`{v}`")).collect::<Vec<_>>().join(", "))]
+    IncompleteClassConstruction { missing_members: Vec<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +147,19 @@ struct StructInfo {
     fields: OrderMap<Symbol, (TypeInfo, Ir)>,
 }
 
+#[derive(Clone)]
+struct ClassField {
+    type_info: TypeInfo,
+    default_value: Option<Ir>,
+    mutable: bool,
+}
+
+#[derive(Clone)]
+pub struct ClassInfo {
+    fields: OrderMap<Symbol, ClassField>,
+    pub methods: OrderMap<Symbol, Ir>,
+}
+
 pub struct SemanticAnalyzer<'a> {
     pub errors: Vec<SemanticError>,
 
@@ -153,6 +169,7 @@ pub struct SemanticAnalyzer<'a> {
     loop_stack: Vec<LoopInfo>,
     failure_contexts: u32,
     structs: Vec<StructInfo>,
+    pub classes: Vec<ClassInfo>,
 }
 
 impl<'a> SemanticAnalyzer<'a> {
@@ -194,6 +211,7 @@ impl<'a> SemanticAnalyzer<'a> {
             loop_stack: vec![],
             failure_contexts: 0,
             structs: vec![],
+            classes: vec![],
         }
     }
 
@@ -315,7 +333,7 @@ impl<'a> SemanticAnalyzer<'a> {
             ExprKind::If(e) => self.lower_if_expr(span, e),
             ExprKind::Loop(body) => self.lower_loop_expr(span, body),
             ExprKind::Break => self.lower_break_expr(span),
-            ExprKind::Func(e) => self.lower_func_expr(span, e),
+            ExprKind::Func(e) => self.lower_func_decl(e),
             ExprKind::Call(e) => self.lower_call_expr(span, e),
             ExprKind::Binary(e) => self.lower_binary_expr(span, e),
             ExprKind::Unary(e) => self.lower_unary_expr(span, e),
@@ -493,6 +511,7 @@ impl<'a> SemanticAnalyzer<'a> {
     }
 
     fn lower_set_expr(&mut self, span: Span, expr: &SetExpr) -> Option<Ir> {
+        let mut value_ir = self.lower_expr(&expr.rhs)?;
         match &expr.lhs.kind {
             ExprKind::Id(id_expr) => {
                 let mut var = match self.lookup(&id_expr.symbol) {
@@ -517,15 +536,13 @@ impl<'a> SemanticAnalyzer<'a> {
                     })
                 }
 
-                let mut value = self.lower_expr(&expr.rhs)?;
-                self.ensure_type_match(&mut var.type_info, &mut value);
-                return Some(self.make_store_ir(span, &var, value));
+                self.ensure_type_match(&mut var.type_info, &mut value_ir);
+                return Some(self.make_store_ir(span, &var, value_ir));
             }
             ExprKind::Member(member_expr) => {
                 let obj = self.lower_expr(&member_expr.object)?;
                 match &obj.ty {
                     TypeInfo::Struct { id } => {
-                        let mut value_ir = self.lower_expr(&expr.rhs)?;
                         let struct_info = &self.structs[*id as usize];
                         let field = struct_info.fields.get_full(&member_expr.property.symbol);
                         return if let Some((index, _, (ty, _))) = field {
@@ -556,19 +573,56 @@ impl<'a> SemanticAnalyzer<'a> {
                             None
                         };
                     }
+                    TypeInfo::Class { id } => {
+                        let class_info = &self.classes[*id as usize];
+                        let field_info = class_info.fields.get_full(&member_expr.property.symbol);
+                        if let Some((index, symbol, field)) = field_info {
+                            if !field.mutable {
+                                self.errors.push(SemanticError {
+                                    span: expr.lhs.span.clone(),
+                                    kind: SemanticErrorKind::ImmutableAssignment {
+                                        name: self.symbol_table.lookup(*symbol).to_string(),
+                                    },
+                                })
+                            }
+
+                            let mut expected = field.type_info.clone();
+                            self.ensure_type_match(&mut expected, &mut value_ir);
+                            return Some(Ir {
+                                span,
+                                ty: expected,
+                                kind: IrKind::StoreObjectField {
+                                    obj: obj.into(),
+                                    index,
+                                    value: value_ir.into(),
+                                },
+                            });
+                        }
+                    }
                     _ => {}
                 }
             }
             ExprKind::Call(_) => {
                 let callee = self.lower_expr(&expr.lhs)?;
+                let value = self.lower_expr(&expr.rhs)?;
                 match callee.kind {
                     IrKind::IndexTuple { tuple, index } => {
-                        let value = self.lower_expr(&expr.rhs)?;
                         return Some(Ir {
                             span,
                             ty: callee.ty,
                             kind: IrKind::SetTupleElement {
                                 obj: tuple,
+                                index,
+                                value: value.into(),
+                            },
+                        });
+                    }
+                    IrKind::LoadArrayElement { array, index } => {
+                        return Some(Ir {
+                            span,
+                            ty: callee.ty,
+                            kind: IrKind::StoreArrayElement {
+                                obj: array,
                                 index,
                                 value: value.into(),
                             },
@@ -808,7 +862,20 @@ impl<'a> SemanticAnalyzer<'a> {
         })
     }
 
-    fn lower_func_expr(&mut self, span: Span, expr: &FunctionExpr) -> Option<Ir> {
+    fn lower_func_decl(&mut self, expr: &FunctionExpr) -> Option<Ir> {
+        let func_ir = self.lower_func_expr(expr)?;
+        let slot = self.declare(expr.name, func_ir.ty.clone(), false);
+        Some(Ir {
+            span: func_ir.span.clone(),
+            ty: func_ir.ty.clone(),
+            kind: IrKind::StoreLocal {
+                slot,
+                value: func_ir.into(),
+            },
+        })
+    }
+
+    fn lower_func_expr(&mut self, expr: &FunctionExpr) -> Option<Ir> {
         let mut return_type = self.parse_type_expr(&expr.return_type);
         let param_names: Vec<_> = expr.params.iter().map(|p| p.name).collect();
         let param_types: Vec<_> = expr
@@ -855,13 +922,11 @@ impl<'a> SemanticAnalyzer<'a> {
         };
 
         let upvalues = scope.upvalues.into_iter().collect();
-        let func_slot = self.declare(expr.name, type_info.clone(), false);
 
         Some(Ir {
-            span,
+            span: expr.span.clone(),
             ty: type_info,
             kind: IrKind::Func(FunctionIr {
-                slot: func_slot,
                 params: param_slots,
                 effects,
                 body: body.into(),
@@ -1026,7 +1091,7 @@ impl<'a> SemanticAnalyzer<'a> {
         Some(Ir {
             span,
             ty: item_type,
-            kind: IrKind::IndexArray {
+            kind: IrKind::LoadArrayElement {
                 array: array_ir.into(),
                 index: index_ir.into(),
             },
@@ -1201,7 +1266,7 @@ impl<'a> SemanticAnalyzer<'a> {
                                     Ir {
                                         span: f.default.span.clone(),
                                         ty,
-                                        kind: IrKind::Break, // TODO: replace it with a placeholder IrKind
+                                        kind: IrKind::Invalid,
                                     },
                                 ),
                             );
@@ -1214,6 +1279,53 @@ impl<'a> SemanticAnalyzer<'a> {
                     fields: field_infos,
                 });
                 TypeInfo::Struct { id: struct_id }
+            }
+            TypeExprKind::Class(members) => {
+                let mut vars = OrderMap::new();
+                let mut methods = OrderMap::new();
+                for m in members {
+                    match m {
+                        ClassMember::Var {
+                            name,
+                            ty,
+                            default,
+                            mutable,
+                        } => {
+                            let type_info = self.parse_type_expr(ty);
+                            let default_value = if let Some(default) = default {
+                                // TODO: handle None
+                                self.lower_expr(default)
+                            } else {
+                                None
+                            };
+                            vars.insert(
+                                name.symbol,
+                                ClassField {
+                                    type_info,
+                                    default_value,
+                                    mutable: *mutable,
+                                },
+                            );
+                        }
+                        ClassMember::Method(func_expr) => {
+                            // TODO
+                            match self.lower_func_expr(func_expr) {
+                                Some(func_ir) => {
+                                    methods.insert(func_expr.name, func_ir);
+                                }
+                                _ => {
+                                    todo!();
+                                }
+                            }
+                        }
+                    }
+                }
+                let id = self.classes.len() as u32;
+                self.classes.push(ClassInfo {
+                    fields: vars,
+                    methods,
+                });
+                TypeInfo::Class { id }
             }
             TypeExprKind::Function { params, ret } => TypeInfo::Function {
                 params: params.iter().map(|p| self.parse_type_expr(p)).collect(),
@@ -1248,7 +1360,7 @@ impl<'a> SemanticAnalyzer<'a> {
             TypeInfo::Struct { id } => {
                 let struct_info = &self.structs[id as usize];
                 let struct_name = struct_info.name;
-                return if let Some((field_index, _, (ty, _))) =
+                return if let Some((index, _, (ty, _))) =
                     struct_info.fields.get_full(&expr.property.symbol)
                 {
                     Some(Ir {
@@ -1256,7 +1368,7 @@ impl<'a> SemanticAnalyzer<'a> {
                         ty: ty.clone(),
                         kind: IrKind::GetStructField {
                             obj: obj.into(),
-                            index: field_index,
+                            index,
                         },
                     })
                 } else {
@@ -1270,6 +1382,41 @@ impl<'a> SemanticAnalyzer<'a> {
                     });
                     None
                 };
+            }
+            TypeInfo::Class { id } => {
+                let class_info = &self.classes[id as usize];
+                if let Some((index, _, field)) = class_info.fields.get_full(&expr.property.symbol) {
+                    return Some(Ir {
+                        span,
+                        ty: field.type_info.clone(),
+                        kind: IrKind::LoadObjectField {
+                            obj: obj.into(),
+                            index,
+                        },
+                    });
+                } else if let Some((index, _, func_ir)) =
+                    class_info.methods.get_full(&expr.property.symbol)
+                {
+                    return Some(Ir {
+                        span,
+                        ty: func_ir.ty.clone(),
+                        kind: IrKind::Method {
+                            obj: obj.into(),
+                            class_id: id,
+                            method_id: index as u32,
+                        },
+                    });
+                } else {
+                    self.errors.push(SemanticError {
+                        span: expr.property.span.clone(),
+                        // TODO: Create class error kind
+                        kind: SemanticErrorKind::UndefinedStructField {
+                            struct_name: None,
+                            field_name: self.symbol_table.lookup(expr.property.symbol).to_string(),
+                        },
+                    });
+                    return None;
+                }
             }
             _ => {}
         }
@@ -1329,6 +1476,76 @@ impl<'a> SemanticAnalyzer<'a> {
                                 ty: (*t).clone(),
                                 kind: IrKind::MakeStruct {
                                     fields: init_fields.into_values().map(|(.., ir)| ir).collect(),
+                                },
+                            });
+                        }
+                        TypeInfo::Class { id } => {
+                            let class_info = &self.classes[id as usize];
+                            let mut init_fields: OrderMap<_, _> = class_info
+                                .fields
+                                .iter()
+                                .map(|(&symbol, v)| {
+                                    (symbol, (v.type_info.clone(), v.default_value.clone()))
+                                })
+                                .collect();
+
+                            for arg in cons_expr.args.iter() {
+                                match &arg.kind {
+                                    ExprKind::Init(init_expr) => {
+                                        if let Some((index, _, (ty, ..))) =
+                                            init_fields.get_full_mut(&init_expr.name.symbol)
+                                        {
+                                            let mut value_ir = self.lower_expr(&init_expr.value)?;
+                                            self.ensure_type_match(ty, &mut value_ir);
+                                            init_fields[index].1 = Some(value_ir);
+                                        } else {
+                                            self.errors.push(SemanticError {
+                                                span: init_expr.name.span.clone(),
+                                                // TODO: create class error kind
+                                                kind: SemanticErrorKind::UndefinedStructField {
+                                                    struct_name: None,
+                                                    field_name: self
+                                                        .symbol_table
+                                                        .lookup(init_expr.name.symbol)
+                                                        .to_string(),
+                                                },
+                                            })
+                                        }
+                                    }
+                                    _ => self.errors.push(SemanticError {
+                                        span: arg.span.clone(),
+                                        kind: SemanticErrorKind::InvalidExpression,
+                                    }),
+                                }
+                            }
+
+                            let mut field_irs = Vec::with_capacity(init_fields.len());
+                            let mut missing_fields = vec![];
+                            for (symbol, (_, value)) in init_fields {
+                                if let Some(value) = value {
+                                    field_irs.push(value)
+                                } else {
+                                    missing_fields
+                                        .push(self.symbol_table.lookup(symbol).to_string())
+                                }
+                            }
+
+                            if !missing_fields.is_empty() {
+                                self.errors.push(SemanticError {
+                                    span,
+                                    kind: SemanticErrorKind::IncompleteClassConstruction {
+                                        missing_members: missing_fields,
+                                    },
+                                });
+                                return None;
+                            }
+
+                            return Some(Ir {
+                                span,
+                                ty: (*t).clone(),
+                                kind: IrKind::MakeObject {
+                                    class_id: id,
+                                    fields: field_irs,
                                 },
                             });
                         }

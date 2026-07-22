@@ -172,12 +172,14 @@ impl<'src, 'a> Parser<'src, 'a> {
                 self.next();
                 Ok(self.parse_decl_expr(true)?.into())
             }
-            Token::Id if self.looks_like_function_signature() => self.parse_function_expr(),
+            Token::Id if self.looks_like_function_signature() => {
+                Ok(self.parse_function_expr()?.into())
+            }
             Token::Id if self.peek_n(1) == Token::Colon => Ok(self.parse_decl_expr(false)?.into()),
             Token::Id if self.peek_n(1) == Token::ColonEq => self.parse_init_expr(),
             Token::Loop => self.parse_loop_expr(),
             Token::Break => self.parse_break_expr(),
-            Token::Type | Token::Tuple | Token::Question | Token::Struct => {
+            Token::Type | Token::Tuple | Token::Question | Token::Struct | Token::Class => {
                 let type_expr = self.parse_type_expr()?;
                 Ok(Expression::new(
                     self.gen_expr_id(),
@@ -190,76 +192,105 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
-        if self.consume_if(Token::Type) {
-            if self.consume_if(Token::LBrace) {
-                let expr = self.parse_function_type_expr()?;
-                self.expect(Token::RBrace)?;
-                return Ok(expr);
+        match self.next() {
+            Token::Type => {
+                if self.consume_if(Token::LBrace) {
+                    let expr = self.parse_function_type_expr()?;
+                    self.expect(Token::RBrace)?;
+                    return Ok(expr);
+                }
+                Ok(TypeExpr {
+                    span: self.span(),
+                    kind: TypeExprKind::Type,
+                })
             }
-            return Ok(TypeExpr {
-                span: self.span(),
-                kind: TypeExprKind::Type,
-            });
-        }
-
-        if self.consume_if(Token::Question) {
-            let start = self.span().start;
-            let type_expr = self.parse_type_expr()?;
-            return Ok(TypeExpr {
-                span: start..type_expr.span.end,
-                kind: TypeExprKind::Option(Box::new(type_expr)),
-            });
-        }
-
-        if self.consume_if(Token::LBracket) {
-            let start = self.span().start;
-            self.expect(Token::RBracket)?;
-            let elem_type = self.parse_type_expr()?;
-            return Ok(TypeExpr {
-                span: start..elem_type.span.end,
-                kind: TypeExprKind::Array(elem_type.into()),
-            });
-        }
-
-        if self.consume_if(Token::Tuple) {
-            let start = self.span().start;
-            self.expect(Token::LParen)?;
-            let mut args = vec![self.parse_type_expr()?];
-            while self.consume_if(Token::Comma) {
-                args.push(self.parse_type_expr()?);
+            Token::Question => {
+                let start = self.span().start;
+                let type_expr = self.parse_type_expr()?;
+                Ok(TypeExpr {
+                    span: start..type_expr.span.end,
+                    kind: TypeExprKind::Option(Box::new(type_expr)),
+                })
             }
-            self.expect(Token::RParen)?;
-            return Ok(TypeExpr {
-                kind: TypeExprKind::Tuple(args),
-                span: start..self.span().end,
-            });
-        }
-
-        if self.consume_if(Token::Struct) {
-            self.expect(Token::Colon)?;
-            self.expect(Token::Newline)?;
-            let fields = self.parse_new_indent_level_expressions(|p| p.parse_decl_expr(false))?;
-            return Ok(TypeExpr {
-                span: self.span(),
-                kind: TypeExprKind::Struct(
-                    fields
-                        .into_iter()
-                        .map(|f| StructField {
-                            name: f.name,
-                            ty: f.ty,
-                            default: *f.value,
+            Token::LBracket => {
+                let start = self.span().start;
+                self.expect(Token::RBracket)?;
+                let elem_type = self.parse_type_expr()?;
+                Ok(TypeExpr {
+                    span: start..elem_type.span.end,
+                    kind: TypeExprKind::Array(elem_type.into()),
+                })
+            }
+            Token::Tuple => {
+                let start = self.span().start;
+                self.expect(Token::LParen)?;
+                let mut args = vec![self.parse_type_expr()?];
+                while self.consume_if(Token::Comma) {
+                    args.push(self.parse_type_expr()?);
+                }
+                self.expect(Token::RParen)?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Tuple(args),
+                    span: start..self.span().end,
+                })
+            }
+            Token::Struct => {
+                self.expect(Token::Colon)?;
+                self.expect(Token::Newline)?;
+                let fields = self.parse_block_expressions(|p| p.parse_decl_expr(false))?;
+                Ok(TypeExpr {
+                    span: self.span(),
+                    kind: TypeExprKind::Struct(
+                        fields
+                            .into_iter()
+                            .map(|f| StructField {
+                                name: f.name,
+                                ty: f.ty,
+                                default: *f.value,
+                            })
+                            .collect(),
+                    ),
+                })
+            }
+            Token::Class => {
+                self.expect(Token::Colon)?;
+                self.expect(Token::Newline)?;
+                let members = self.parse_block_expressions(|p| {
+                    if p.looks_like_function_signature() {
+                        let func_expr = p.parse_function_expr()?;
+                        Ok(ClassMember::Method(func_expr))
+                    } else {
+                        let mutable = p.consume_if(Token::Var);
+                        let name = p.parse_id_expr()?;
+                        p.expect(Token::Colon)?;
+                        let ty = p.parse_type_expr()?;
+                        let default = if p.consume_if(Token::Eq) {
+                            Some(p.parse_expression()?)
+                        } else {
+                            None
+                        };
+                        Ok(ClassMember::Var {
+                            name,
+                            ty,
+                            default,
+                            mutable,
                         })
-                        .collect(),
-                ),
-            });
+                    }
+                })?;
+                Ok(TypeExpr {
+                    span: self.span(),
+                    kind: TypeExprKind::Class(members),
+                })
+            }
+            Token::Id => {
+                let symbol = self.symbol_table.intern(self.slice());
+                Ok(TypeExpr {
+                    span: self.span(),
+                    kind: TypeExprKind::Named(symbol),
+                })
+            }
+            _ => Err(self.unexpected_error()),
         }
-
-        self.expect(Token::Id)?;
-        let symbol = self.symbol_table.intern(self.slice());
-        Ok(TypeExpr {
-            span: self.span(),
-            kind: TypeExprKind::Named(symbol),
-        })
     }
 
     fn parse_function_type_expr(&mut self) -> ParseResult<TypeExpr> {
@@ -644,7 +675,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(list)
     }
 
-    fn parse_new_indent_level_expressions<P, E>(&mut self, parse: P) -> ParseResult<Vec<E>>
+    fn parse_block_expressions<P, E>(&mut self, parse: P) -> ParseResult<Vec<E>>
     where
         P: Fn(&mut Self) -> ParseResult<E>,
     {
@@ -713,7 +744,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok((params, effects, return_type))
     }
 
-    fn parse_function_expr(&mut self) -> ParseResult<Expression> {
+    fn parse_function_expr(&mut self) -> ParseResult<FunctionExpr> {
         self.expect(Token::Id)?;
         let start = self.span().start;
         let name = self.symbol();
@@ -727,10 +758,14 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.parse_expression()?
         };
 
-        Ok(Expression::new(
+        Ok(FunctionExpr::new(
             self.gen_expr_id(),
             start..body.span.end,
-            FunctionExpr::new(name, params, effects, return_type, body),
+            name,
+            params,
+            effects,
+            return_type,
+            body,
         ))
     }
 
