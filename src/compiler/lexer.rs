@@ -342,7 +342,36 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
 
 pub fn tokenize(source: &str) -> Result<Vec<(Token, Span)>, LexerError> {
     let lex = IndentAwareLexer::new(source);
-    lex.collect()
+    let mut tokens = vec![];
+    let mut template_depth = 0;
+    for token in lex {
+        let token = token?;
+        match token.0 {
+            Token::TemplateHead => {
+                template_depth += 1;
+                tokens.push(token);
+            }
+            Token::TemplateTail => {
+                template_depth -= 1;
+                tokens.push(token);
+            }
+            Token::TemplateMiddle => {
+                if template_depth > 0 {
+                    tokens.push(token);
+                } else {
+                    let Range { start, end } = token.1;
+                    let ts = tokenize(&source[start + 1..end - 1])?;
+                    tokens.push((Token::RBrace, start..start + 1));
+                    for t in ts {
+                        tokens.push((t.0, (start + 1 + t.1.start)..(start + 1 + t.1.end)));
+                    }
+                    tokens.push((Token::LBrace, end - 1..end));
+                }
+            }
+            _ => tokens.push(token),
+        }
+    }
+    Ok(tokens)
 }
 
 #[cfg(test)]
