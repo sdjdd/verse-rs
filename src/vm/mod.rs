@@ -318,32 +318,20 @@ impl Vm {
         obj_id
     }
 
-    fn resolve_ref<'a>(&'a self, mut value: &'a Value) -> &'a Value {
-        while let Value::Ref(id) = value {
-            value = self.heap.fetch_obj(*id);
-        }
-        value
-    }
-
-    fn get_value_type<'a>(&'a self, value: &Value) -> TypeId {
+    fn resolve_ref<F, T>(&self, value: &Value, mut f: F) -> T
+    where
+        F: FnMut(&Value) -> T,
+    {
         match value {
-            Value::Void => self.predefined_types.t_void,
-            Value::Integer(_) => self.predefined_types.t_int,
-            Value::Rational(..) => self.predefined_types.t_rational,
-            Value::Float(_) => self.predefined_types.t_float,
-            Value::Char(_) => self.predefined_types.t_char,
-            Value::Char32(_) => self.predefined_types.t_char32,
-            Value::String(_) => self.predefined_types.t_string,
-            Value::Logic(_) => self.predefined_types.t_logic,
-            Value::Option { type_id, .. }
-            | Value::Tuple { type_id, .. }
-            | Value::Array { type_id, .. }
-            | Value::Object { type_id, .. }
-            | Value::Function { type_id, .. }
-            | Value::Method { type_id, .. }
-            | Value::Type(type_id) => *type_id,
-            Value::Ref(obj_id) => self.get_value_type(self.heap.fetch_obj(*obj_id)),
-            Value::Rc(rc) => self.get_value_type(&*rc.borrow()),
+            Value::Rc(rc) => {
+                let value = &*rc.borrow();
+                self.resolve_ref(value, f)
+            }
+            Value::Ref(obj_id) => {
+                let value = self.heap.fetch_obj(*obj_id);
+                self.resolve_ref(value, f)
+            }
+            _ => f(value),
         }
     }
 
@@ -515,22 +503,26 @@ impl Vm {
 
     fn exec_index_array(&mut self) {
         let index = match self.op_stack.pop().unwrap() {
-            Value::Integer(v) => v,
-            _ => unreachable!(),
-        };
-        match &self.op_stack.pop().unwrap() {
-            Value::Ref(obj_id) => match self.heap.fetch_obj(*obj_id) {
-                Value::Array { elements, .. } => {
-                    if index >= 0 && (index as usize) < elements.len() {
-                        self.op_stack.push(elements[index as usize].clone());
-                    } else {
-                        self.has_pending_failure = true
-                    }
+            Value::Integer(v) => {
+                if v >= 0 {
+                    v as usize
+                } else {
+                    self.has_pending_failure = true;
+                    return;
                 }
-                _ => unreachable!(),
-            },
+            }
             _ => unreachable!(),
         };
+        let array = self.op_stack.pop().unwrap();
+        let element = self.resolve_ref(&array, |arr| match arr {
+            Value::Array { elements, .. } => elements.get(index).cloned(),
+            _ => unreachable!(),
+        });
+        if let Some(element) = element {
+            self.op_stack.push(element);
+        } else {
+            self.has_pending_failure = true;
+        }
     }
 
     fn exec_set_array_element(&mut self) {
@@ -797,11 +789,10 @@ impl Vm {
         let values = self.op_stack.split_off(self.op_stack.len() - count);
         let mut buf = String::new();
         for value in values {
-            let value = self.resolve_ref(&value);
-            match value {
+            self.resolve_ref(&value, |v| match v {
                 Value::String(s) => buf.push_str(s),
                 _ => panic!("not string"),
-            }
+            });
         }
         let obj_id = self.heap.alloc_obj(Value::String(buf));
         self.op_stack.push(Value::Ref(obj_id));
@@ -810,18 +801,34 @@ impl Vm {
     fn exec_cast(&mut self) {
         let expect = TypeId(self.read_u32());
         let value = self.op_stack.last().unwrap();
-        let type_id = self.get_value_type(value);
+        let type_id = self.resolve_ref(value, |v| match v {
+            Value::Void => self.predefined_types.t_void,
+            Value::Integer(_) => self.predefined_types.t_int,
+            Value::Rational(..) => self.predefined_types.t_rational,
+            Value::Float(_) => self.predefined_types.t_float,
+            Value::Char(_) => self.predefined_types.t_char,
+            Value::Char32(_) => self.predefined_types.t_char32,
+            Value::String(_) => self.predefined_types.t_string,
+            Value::Logic(_) => self.predefined_types.t_logic,
+            Value::Option { type_id, .. }
+            | Value::Tuple { type_id, .. }
+            | Value::Array { type_id, .. }
+            | Value::Object { type_id, .. }
+            | Value::Function { type_id, .. }
+            | Value::Method { type_id, .. }
+            | Value::Type(type_id) => *type_id,
+            Value::Rc(_) | Value::Ref(_) => unreachable!(),
+        });
         self.has_pending_failure = expect != type_id
     }
 
     fn exec_len(&mut self) {
         let value = self.op_stack.pop().unwrap();
-        let value = self.resolve_ref(&value);
-        let len = match value {
+        let len = self.resolve_ref(&value, |v| match v {
             Value::String(s) => s.len(),
             Value::Array { elements, .. } => elements.len(),
             _ => unreachable!(),
-        };
+        });
         self.op_stack.push(Value::Integer(len as i64));
     }
 
