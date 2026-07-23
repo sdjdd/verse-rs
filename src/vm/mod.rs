@@ -306,9 +306,6 @@ impl Vm {
     }
 
     fn box_local(&mut self, index: usize) -> ObjectId {
-        if let Value::Ref(obj_id) = &self.stack[index] {
-            return *obj_id;
-        }
         let value = std::mem::take(&mut self.stack[index]);
         let obj_id = self.heap.alloc_obj(value);
         self.stack[index] = Value::Ref(obj_id);
