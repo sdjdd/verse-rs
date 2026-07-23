@@ -1,6 +1,6 @@
 use crate::runtime::Value;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ObjectId(pub(crate) usize);
 
 pub trait Heap {

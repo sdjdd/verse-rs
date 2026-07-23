@@ -21,12 +21,18 @@ pub type NativeFunction = fn(ctx: &mut CallContext);
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct FunctionId(pub usize);
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Upvalue {
+    Open { stack_index: usize },
+    Closed(ObjectId),
+}
+
 #[derive(Debug, Clone)]
 pub enum FnKind {
     Native(NativeFunction),
     Verse {
         id: FunctionId,
-        upvalues: Vec<ObjectId>,
+        upvalues: Vec<Rc<RefCell<Upvalue>>>,
     },
 }
 

@@ -92,10 +92,10 @@ pub struct Variable {
 struct LookupResult {
     is_global: bool,
     is_upvalue: bool,
+    depth: usize,
     slot: Slot,
     type_info: TypeInfo,
     mutable: bool,
-    scope_index: usize,
 }
 
 pub struct Scope {
@@ -244,36 +244,34 @@ impl<'a> SemanticAnalyzer<'a> {
 
     fn lookup(&mut self, symbol: &Symbol) -> Option<LookupResult> {
         let mut captured = false;
+        let mut depth = 0;
         for (index, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(var) = scope.lookup(*symbol) {
                 let res = LookupResult {
                     is_global: index == 0,
                     is_upvalue: captured,
+                    depth,
                     slot: var.slot,
                     type_info: var.type_info.clone(),
                     mutable: var.mutable,
-                    scope_index: index,
                 };
                 return Some(res);
             }
             if scope.is_function {
-                captured = true
+                captured = true;
+                depth += 1;
             }
         }
         None
     }
 
-    fn capture(&mut self, scope_index: usize, slot: Slot) -> usize {
-        let mut parent_index = None;
-        for scope in self.scopes.iter_mut().skip(scope_index + 1) {
-            let desc = if let Some(index) = parent_index {
-                UpvalueDesc::Upvalue(index)
-            } else {
-                UpvalueDesc::Local(slot)
-            };
-            parent_index = Some(scope.upvalues.insert_full(desc).0);
-        }
-        parent_index.unwrap()
+    fn capture(&mut self, depth: usize, slot: Slot) -> usize {
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .upvalues
+            .insert_full(UpvalueDesc::EnclosingLocal { depth, slot })
+            .0
     }
 
     fn push_loop(&mut self) {
@@ -658,7 +656,7 @@ impl<'a> SemanticAnalyzer<'a> {
         let kind = if var.is_global {
             IrKind::LoadGlobal { slot: var.slot }
         } else if var.is_upvalue {
-            let index = self.capture(var.scope_index, var.slot);
+            let index = self.capture(var.depth, var.slot);
             IrKind::LoadUpvalue { index }
         } else {
             IrKind::LoadLocal { slot: var.slot }
@@ -678,7 +676,7 @@ impl<'a> SemanticAnalyzer<'a> {
             }
         } else if var.is_upvalue {
             IrKind::StoreUpvalue {
-                index: self.capture(var.scope_index, var.slot),
+                index: self.capture(var.depth, var.slot),
                 value: Box::new(value),
             }
         } else {

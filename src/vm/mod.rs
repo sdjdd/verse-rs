@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use derive_more::Constructor;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -7,7 +7,7 @@ use crate::{
     compiler::ir::UpvalueDesc,
     core::{ConstValue, types::PredefinedTypes},
     runtime::{
-        CallContext, FnKind, FunctionId, TypeId, Value,
+        CallContext, FnKind, FunctionId, TypeId, Upvalue, Value,
         heap::{Heap, ObjectId, SimpleHeap},
     },
 };
@@ -104,7 +104,8 @@ struct Frame {
     func_id: usize,
     stack_base: usize,
     pc: usize,
-    upvalues: Vec<ObjectId>,
+    captures: Vec<Rc<RefCell<Upvalue>>>,
+    upvalues: Vec<Rc<RefCell<Upvalue>>>,
 }
 
 pub struct Class {
@@ -144,6 +145,7 @@ impl Vm {
             func_id,
             stack_base: self.stack.len(),
             pc: 0,
+            captures: vec![],
             upvalues: vec![],
         });
 
@@ -161,8 +163,9 @@ impl Vm {
                     Opcode::try_from(*byte).unwrap()
                 }
                 _ => {
+                    let frame = self.frames.pop().unwrap();
+                    self.close_captures(&frame.captures);
                     self.stack.truncate(frame.stack_base);
-                    self.frames.pop();
                     continue;
                 }
             };
@@ -193,10 +196,6 @@ impl Vm {
 
         assert_eq!(self.op_stack.len(), 0);
         assert_eq!(self.op_stack.pop(), None);
-    }
-
-    fn get_stack_index(&self, offset: usize) -> usize {
-        self.frames.last().unwrap().stack_base + offset
     }
 
     fn read_byte(&mut self) -> u8 {
@@ -302,13 +301,11 @@ impl Vm {
         } else if index == self.stack.len() {
             self.stack.push(value);
         } else {
-            println!("index={}, value={:?}", index, value);
             panic!("stack slot must be allocated continuously")
         }
     }
 
-    fn box_local(&mut self, offset: usize) -> ObjectId {
-        let index = self.get_stack_index(offset);
+    fn box_local(&mut self, index: usize) -> ObjectId {
         if let Value::Ref(obj_id) = &self.stack[index] {
             return *obj_id;
         }
@@ -332,6 +329,16 @@ impl Vm {
                 self.resolve_ref(value, f)
             }
             _ => f(value),
+        }
+    }
+
+    fn close_captures(&mut self, captures: &[Rc<RefCell<Upvalue>>]) {
+        for upvalue in captures {
+            let uv = match *upvalue.borrow() {
+                Upvalue::Open { stack_index } => Upvalue::Closed(self.box_local(stack_index)),
+                uv => uv,
+            };
+            *upvalue.borrow_mut() = uv;
         }
     }
 
@@ -432,14 +439,24 @@ impl Vm {
     fn exec_store_upvalue(&mut self) {
         let value = self.op_stack.last().unwrap().copy_value();
         let index = self.read_u32() as usize;
-        let obj_id = self.frames.last().unwrap().upvalues[index];
-        self.heap.update_obj(obj_id, value);
+        let upvalue = &self.frames.last().unwrap().upvalues[index];
+        match *upvalue.borrow() {
+            Upvalue::Open { stack_index } => {
+                self.stack[stack_index] = value;
+            }
+            Upvalue::Closed(obj_id) => {
+                self.heap.update_obj(obj_id, value);
+            }
+        }
     }
 
     fn exec_load_upvalue(&mut self) {
         let index = self.read_u32() as usize;
-        let obj_id = self.frames.last().unwrap().upvalues[index];
-        let value = self.heap.fetch_obj(obj_id).clone();
+        let upvalue = &self.frames.last().unwrap().upvalues[index];
+        let value = match *upvalue.borrow() {
+            Upvalue::Open { stack_index } => self.stack[stack_index].clone(),
+            Upvalue::Closed(obj_id) => self.heap.fetch_obj(obj_id).clone(),
+        };
         self.op_stack.push(value);
     }
 
@@ -668,10 +685,15 @@ impl Vm {
         let upvalues = upvalues
             .into_iter()
             .map(|upvalue| match upvalue {
-                UpvalueDesc::Local(slot) => self.box_local(slot.0),
-                UpvalueDesc::Upvalue(index) => {
-                    let parent_frame = self.frames.iter().rev().next().unwrap();
-                    parent_frame.upvalues[index]
+                UpvalueDesc::EnclosingLocal { depth, slot } => {
+                    let frame = self.frames.iter_mut().rev().skip(depth - 1).next().unwrap();
+                    let upvalue = Rc::new(RefCell::new(Upvalue::Open {
+                        stack_index: frame.stack_base + slot.0,
+                    }));
+                    if !frame.captures.contains(&upvalue) {
+                        frame.captures.push(upvalue.clone());
+                    }
+                    upvalue
                 }
             })
             .collect();
@@ -748,6 +770,7 @@ impl Vm {
                     func_id: id.0,
                     stack_base: self.stack.len(),
                     pc: 0,
+                    captures: vec![],
                     upvalues: upvalues.clone(),
                 };
                 for arg in args {

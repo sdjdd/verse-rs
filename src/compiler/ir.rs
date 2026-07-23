@@ -221,8 +221,8 @@ pub struct CompareChainIr {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum UpvalueDesc {
-    Local(Slot),
-    Upvalue(usize),
+    EnclosingLocal { depth: usize, slot: Slot },
+    // EnclosingSelfField
 }
 
 #[derive(Debug, Clone, Copy)]
