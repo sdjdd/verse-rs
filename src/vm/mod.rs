@@ -687,13 +687,18 @@ impl Vm {
             .map(|upvalue| match upvalue {
                 UpvalueDesc::EnclosingLocal { depth, slot } => {
                     let frame = self.frames.iter_mut().rev().skip(depth - 1).next().unwrap();
-                    let upvalue = Rc::new(RefCell::new(Upvalue::Open {
+                    let upvalue = Upvalue::Open {
                         stack_index: frame.stack_base + slot.0,
-                    }));
-                    if !frame.captures.contains(&upvalue) {
-                        frame.captures.push(upvalue.clone());
-                    }
-                    upvalue
+                    };
+                    let index = frame
+                        .captures
+                        .iter()
+                        .position(|v| *v.borrow() == upvalue)
+                        .unwrap_or_else(|| {
+                            frame.captures.push(Rc::new(RefCell::new(upvalue)));
+                            frame.captures.len() - 1
+                        });
+                    frame.captures[index].clone()
                 }
             })
             .collect();
