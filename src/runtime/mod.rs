@@ -115,13 +115,14 @@ impl Value {
         }
     }
 
-    pub fn to_string(self: Value) -> String {
+    pub fn to_string(self: &Value) -> String {
         match self {
             Value::Integer(v) => format!("{}", v),
             Value::Float(v) => format!("{}", v),
-            Value::Char(c) => format!("{}", c as char),
+            Value::Char(c) => format!("{}", *c as char),
             Value::Char32(c) => format!("{}", c),
-            Value::String(s) => s,
+            Value::String(s) => s.clone(),
+            Value::Array { elements, .. } => format!("array({})", elements.len()),
             _ => unimplemented!(),
         }
     }
@@ -191,7 +192,7 @@ impl std::ops::Sub for Value {
         match (self, rhs) {
             (Value::Integer(a), Value::Integer(b)) => Value::Integer(a - b),
             (Value::Float(a), Value::Float(b)) => Value::Float(a - b),
-            _ => unimplemented!(),
+            (a, b) => unimplemented!("{:?} - {:?}", a, b),
         }
     }
 }
