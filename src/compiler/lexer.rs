@@ -189,12 +189,15 @@ struct IndentInfo {
 
 #[derive(Clone)]
 pub struct IndentAwareLexer<'src> {
+    source: &'src str,
     lexer: SpannedIter<'src, Token>,
     pending: VecDeque<Result<(Token, Span), LexerError>>,
     indent_stack: Vec<IndentInfo>,
     current_indent: Option<IndentInfo>,
     at_line_start: bool,
     has_error: bool,
+    template_depth: u32,
+    span_offset: usize,
 }
 
 impl<'src> IndentAwareLexer<'src> {
@@ -206,7 +209,21 @@ impl<'src> IndentAwareLexer<'src> {
             current_indent: None,
             at_line_start: true,
             has_error: false,
+            template_depth: 0,
+            span_offset: 0,
+            source,
         }
+    }
+
+    fn apply_span_offset(&self, span: Span) -> Span {
+        span.start + self.span_offset..span.end + self.span_offset
+    }
+
+    fn sync_unexpected_template_rest(&mut self, rbrace_position: usize) {
+        self.pending
+            .push_back(Ok((Token::RBrace, rbrace_position..rbrace_position + 1)));
+        self.span_offset = rbrace_position + 1;
+        self.lexer = Token::lexer(&self.source[self.span_offset..]).spanned();
     }
 }
 
@@ -224,14 +241,36 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
             }
 
             let (token, span) = match self.lexer.next() {
-                Some((Ok(token), span)) => (token, span),
+                Some((Ok(token), span)) => (token, self.apply_span_offset(span)),
                 Some((Err(_), span)) => {
-                    self.pending.push_back(Err(LexerError::InvalidToken(span)));
+                    self.pending
+                        .push_back(Err(LexerError::InvalidToken(self.apply_span_offset(span))));
                     self.has_error = true;
                     break;
                 }
                 None => break,
             };
+
+            match token {
+                Token::TemplateHead => {
+                    self.template_depth += 1;
+                }
+                Token::TemplateMiddle => {
+                    if self.template_depth == 0 {
+                        self.sync_unexpected_template_rest(span.start);
+                        continue;
+                    }
+                }
+                Token::TemplateTail => {
+                    if self.template_depth > 0 {
+                        self.template_depth -= 1;
+                    } else {
+                        self.sync_unexpected_template_rest(span.start);
+                        continue;
+                    }
+                }
+                _ => {}
+            }
 
             match token {
                 Token::Newline => {
@@ -342,36 +381,7 @@ impl<'src> Iterator for IndentAwareLexer<'src> {
 
 pub fn tokenize(source: &str) -> Result<Vec<(Token, Span)>, LexerError> {
     let lex = IndentAwareLexer::new(source);
-    let mut tokens = vec![];
-    let mut template_depth = 0;
-    for token in lex {
-        let token = token?;
-        match token.0 {
-            Token::TemplateHead => {
-                template_depth += 1;
-                tokens.push(token);
-            }
-            Token::TemplateTail => {
-                template_depth -= 1;
-                tokens.push(token);
-            }
-            Token::TemplateMiddle => {
-                if template_depth > 0 {
-                    tokens.push(token);
-                } else {
-                    let Range { start, end } = token.1;
-                    let ts = tokenize(&source[start + 1..end - 1])?;
-                    tokens.push((Token::RBrace, start..start + 1));
-                    for t in ts {
-                        tokens.push((t.0, (start + 1 + t.1.start)..(start + 1 + t.1.end)));
-                    }
-                    tokens.push((Token::LBrace, end - 1..end));
-                }
-            }
-            _ => tokens.push(token),
-        }
-    }
-    Ok(tokens)
+    lex.collect()
 }
 
 #[cfg(test)]

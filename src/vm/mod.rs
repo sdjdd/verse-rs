@@ -806,8 +806,10 @@ impl Vm {
     fn exec_to_string(&mut self) {
         let value = self.op_stack.pop().unwrap();
         let value = match value {
-            Value::String(_) | Value::Ref(_) => value,
-            _ => Value::String(value.to_string()),
+            Value::String(_) => value,
+            _ => self.resolve_ref(&value, |v| match v {
+                _ => Value::String(v.to_string()),
+            }),
         };
         self.op_stack.push(value);
     }

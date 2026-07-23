@@ -856,6 +856,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         elements.push(TemplateElement::Raw(
             self.escape_string_literal(&src[1..src.len() - 1]),
         ));
+        self.skip_newlines();
         loop {
             match self.peek() {
                 Token::TemplateMiddle => {
@@ -864,9 +865,13 @@ impl<'src, 'a> Parser<'src, 'a> {
                     elements.push(TemplateElement::Raw(
                         self.escape_string_literal(&src[1..src.len() - 1]),
                     ));
+                    self.skip_newlines();
                 }
                 Token::TemplateTail => break,
-                _ => elements.push(TemplateElement::Expr(self.parse_expression()?)),
+                _ => {
+                    elements.push(TemplateElement::Expr(self.parse_expression()?));
+                    self.skip_newlines();
+                }
             }
         }
         self.expect(Token::TemplateTail)?;
