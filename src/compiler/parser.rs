@@ -152,18 +152,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// Recover inside a block: consume tokens until the next line boundary
-    /// without crossing a `Dedent`, so the block loop can see it.
-    fn synchronize_block_line(&mut self) {
-        let start = self.pos;
-        while !matches!(self.peek(), Token::Newline | Token::Dedent | Token::EOF) {
-            self.next();
-        }
-        if self.pos == start {
-            self.next();
-        }
-    }
-
     fn parse_expression(&mut self) -> ParseResult<Expression> {
         match self.peek() {
             Token::If => self.parse_if_expr(),
@@ -528,9 +516,28 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(expr)
     }
 
-    fn parse_if_expr(&mut self) -> ParseResult<Expression> {
+    fn parse_if_expr(&mut self) -> ParseResult {
         self.expect(Token::If)?;
         let start = self.span().start;
+
+        let parse_else = |p: &mut Self| -> ParseResult<Option<Expression>> {
+            if !p.consume_if(Token::Else) {
+                return Ok(None);
+            }
+            let expr = match p.peek() {
+                Token::Colon => {
+                    p.next();
+                    p.expect(Token::Newline)?;
+                    p.parse_block_expr()?
+                }
+                Token::If => p.parse_if_expr()?,
+                _ => {
+                    p.next();
+                    return Err(p.unexpected_error());
+                }
+            };
+            Ok(Some(expr))
+        };
 
         let (test, consequent, alternate) = match self.next() {
             Token::LParen => {
@@ -544,25 +551,12 @@ impl<'src, 'a> Parser<'src, 'a> {
                     Token::Colon => {
                         self.expect(Token::Newline)?;
                         let consequent = self.parse_block_expr()?;
-                        let alternate = if self.consume_if(Token::Else) {
-                            self.expect(Token::Colon)?;
-                            self.expect(Token::Newline)?;
-                            let alternate = self.parse_block_expr()?;
-                            Some(alternate)
-                        } else {
-                            None
-                        };
-                        (consequent, alternate)
+                        (consequent, parse_else(self)?)
                     }
                     // if (test) then consequent else alternate
                     Token::Then => {
                         let consequent = self.parse_expression()?;
-                        let alternate = if self.consume_if(Token::Else) {
-                            Some(self.parse_expression()?)
-                        } else {
-                            None
-                        };
-                        (consequent, alternate)
+                        (consequent, parse_else(self)?)
                     }
                     _ => {
                         return Err(self.unexpected_error());
@@ -583,15 +577,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 self.expect(Token::Colon)?;
                 self.expect(Token::Newline)?;
                 let consequent = self.parse_block_expr()?;
-                let alternate = if self.consume_if(Token::Else) {
-                    self.expect(Token::Colon)?;
-                    self.expect(Token::Newline)?;
-                    let alternate = self.parse_block_expr()?;
-                    Some(alternate)
-                } else {
-                    None
-                };
-                (test, consequent, alternate)
+                (test, consequent, parse_else(self)?)
             }
             _ => {
                 return Err(self.unexpected_error());
@@ -633,31 +619,11 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     fn parse_block_expr(&mut self) -> ParseResult<Expression> {
-        self.skip_newlines();
-        self.expect(Token::Indent)?;
         let start = self.span().end;
-        let mut end = start;
-        let mut body = Vec::new();
-        loop {
-            if matches!(self.peek(), Token::Dedent | Token::EOF) {
-                self.next();
-                break;
-            }
-            match self.parse_expression() {
-                Ok(expr) => {
-                    body.push(expr);
-                    end = self.span().end;
-                }
-                Err(e) => {
-                    self.errors.push(e);
-                    self.synchronize_block_line();
-                }
-            }
-            self.skip_newlines();
-        }
+        let body = self.parse_block_expressions(|p| p.parse_expression())?;
         Ok(Expression::new(
             self.gen_expr_id(),
-            start..end,
+            start..self.span().end,
             BlockExpr::new(body),
         ))
     }
