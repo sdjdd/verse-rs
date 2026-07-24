@@ -21,7 +21,7 @@ pub struct Compiler<'a> {
     pub functions: Vec<Function>,
     pub classes: Vec<vm::Class>,
 
-    op_stack_size: u16,
+    op_stack_depth: u16,
     loop_ctx_stack: Vec<LoopContext>,
     base_fn_id: usize,
     type_registry: &'a mut TypeRegistry,
@@ -35,7 +35,7 @@ impl<'a> Compiler<'a> {
             predefined_types,
             bytecode: vec![],
             failure_handlers: vec![],
-            op_stack_size: 0,
+            op_stack_depth: 0,
             loop_ctx_stack: vec![],
             functions: vec![],
             base_fn_id: 0,
@@ -172,7 +172,7 @@ impl<'a> Compiler<'a> {
 
     fn append_op(&mut self, op: Opcode, op_stack_size_change: i16) {
         self.append_u8(op.into());
-        self.op_stack_size = (self.op_stack_size as i16 + op_stack_size_change) as u16
+        self.op_stack_depth = (self.op_stack_depth as i16 + op_stack_size_change) as u16
     }
 
     fn intern_type(&mut self, type_info: TypeInfo) -> TypeId {
@@ -344,7 +344,7 @@ impl<'a> Compiler<'a> {
             start_pc: self.bytecode.len() as u32,
             end_pc: 0,
             handler_pc: 0,
-            op_stack_size: self.op_stack_size,
+            stack_depth: self.op_stack_depth,
         };
 
         self.compile_ir(*if_ir.test);
@@ -459,7 +459,7 @@ impl<'a> Compiler<'a> {
                 TemplateElementIr::String(id) => {
                     self.append_op(Opcode::PushString, 1);
                     self.append_u32(id.0 as u32);
-                    self.op_stack_size += 1;
+                    self.op_stack_depth += 1;
                 }
             }
         }

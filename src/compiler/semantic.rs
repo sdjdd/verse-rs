@@ -211,8 +211,11 @@ impl<'a> SemanticAnalyzer<'a> {
             global_scope.declare(s, t, false);
         }
 
+        let mut root_scope = Scope::new(true);
+        root_scope.next_slot = global_scope.next_slot;
+
         Self {
-            scopes: vec![global_scope, Scope::new(true)],
+            scopes: vec![global_scope, root_scope],
             builtin_symbols,
             errors: vec![],
             symbol_table,
@@ -256,7 +259,7 @@ impl<'a> SemanticAnalyzer<'a> {
         for (index, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(var) = scope.lookup(*symbol) {
                 let res = LookupResult {
-                    is_global: index == 0,
+                    is_global: index <= 1,
                     is_upvalue: captured,
                     depth,
                     slot: var.slot,
@@ -871,7 +874,7 @@ impl<'a> SemanticAnalyzer<'a> {
 
     fn lower_func_decl(&mut self, expr: &FunctionExpr) -> Option<Ir> {
         let func_ir = self.lower_func_expr(expr)?;
-        let slot = self.declare(expr.name, func_ir.ty.clone(), false);
+        let slot = self.lookup(&expr.name).unwrap().slot;
         Some(Ir {
             span: expr.span.clone(),
             ty: func_ir.ty.clone(),
@@ -891,6 +894,12 @@ impl<'a> SemanticAnalyzer<'a> {
             .map(|p| self.parse_type_expr(&p.ty))
             .collect();
 
+        let type_info = TypeInfo::Function {
+            params: param_types.clone(),
+            ret: return_type.clone().into(),
+        };
+        self.declare(expr.name, type_info.clone(), false);
+
         let mut effects = Effects { decides: false };
         for effect in expr.effects.iter() {
             match effect.symbol {
@@ -907,8 +916,8 @@ impl<'a> SemanticAnalyzer<'a> {
         self.push_scope(true);
 
         let mut param_slots = vec![];
-        for (param_name, param_type) in param_names.into_iter().zip(param_types.iter()) {
-            let slot = self.declare(param_name, param_type.clone(), true);
+        for (param_name, param_type) in param_names.into_iter().zip(param_types.into_iter()) {
+            let slot = self.declare(param_name, param_type, true);
             param_slots.push(slot);
         }
 
@@ -923,10 +932,6 @@ impl<'a> SemanticAnalyzer<'a> {
         }
 
         let return_void = return_type == TypeInfo::Void;
-        let type_info = TypeInfo::Function {
-            params: param_types,
-            ret: return_type.into(),
-        };
 
         let upvalues = scope.upvalues.into_iter().collect();
 
