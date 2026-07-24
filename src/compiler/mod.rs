@@ -78,7 +78,7 @@ pub struct CompileOutcome {
     pub global_symbol_slots: HashMap<Symbol, usize>,
     pub functions: Vec<Function>,
     pub classes: Vec<vm::Class>,
-    pub entry: usize,
+    pub entry: u32,
 }
 
 pub fn compile(src: &str) -> Result<CompileOutcome, Vec<CompileError>> {
@@ -108,22 +108,16 @@ pub fn compile(src: &str) -> Result<CompileOutcome, Vec<CompileError>> {
     let predefined_types = PredefinedTypes::install(&mut type_registry);
     let mut compiler = Compiler::new(&mut type_registry, predefined_types);
     let global_symbol_slots = analyzer.get_global_symbol_slots();
-    let classes: Vec<_> = analyzer
-        .classes
-        .into_iter()
-        .map(|c| compiler::Class {
-            methods: c.methods.into_values().collect(),
-        })
-        .collect();
 
-    compiler.compile(root_irs, classes);
+    compiler.compile_classes(analyzer.classes.into_iter().map(|c| c.into()).collect());
+    compiler.compile(root_irs);
 
     Ok(CompileOutcome {
         const_table: const_pool.into_vec(),
         global_symbol_slots,
-        entry: compiler.functions.len() - 1,
+        entry: (compiler.functions.len() - 1) as u32,
         functions: compiler.functions,
-        classes: compiler.compiled_classes,
+        classes: compiler.classes,
         symbol_table,
         type_registry,
         predefined_types,

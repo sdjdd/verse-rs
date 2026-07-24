@@ -19,7 +19,7 @@ pub struct CallContext<'a> {
 pub type NativeFunction = fn(ctx: &mut CallContext);
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct FunctionId(pub usize);
+pub struct FunctionId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Upvalue {

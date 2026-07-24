@@ -15,22 +15,17 @@ struct LoopContext {
     break_jmp_target_indices: Vec<u32>,
 }
 
-pub struct Class {
-    pub methods: Vec<Ir>,
-}
-
 pub struct Compiler<'a> {
     pub bytecode: Vec<u8>,
     pub failure_handlers: Vec<FailureHandler>,
     pub functions: Vec<Function>,
+    pub classes: Vec<vm::Class>,
 
     op_stack_size: u16,
     loop_ctx_stack: Vec<LoopContext>,
     base_fn_id: usize,
     type_registry: &'a mut TypeRegistry,
     predefined_types: PredefinedTypes,
-    classes: Vec<Class>,
-    pub compiled_classes: Vec<vm::Class>,
 }
 
 impl<'a> Compiler<'a> {
@@ -45,12 +40,10 @@ impl<'a> Compiler<'a> {
             functions: vec![],
             base_fn_id: 0,
             classes: vec![],
-            compiled_classes: vec![],
         }
     }
 
-    pub fn compile(&mut self, irs: Vec<Ir>, classes: Vec<Class>) {
-        self.classes = classes;
+    pub fn compile(&mut self, irs: Vec<Ir>) {
         for ir in irs {
             self.compile_ir(ir);
             self.append_op(Opcode::Pop, -1);
@@ -102,8 +95,8 @@ impl<'a> Compiler<'a> {
             IrKind::Break => self.compile_break(),
             IrKind::Block(irs) => self.compile_block(irs),
             IrKind::Func(fn_ir) => {
-                let func_id = self.compile_function(fn_ir, ir.ty);
-                self.compile_make_closure(func_id as u32);
+                let func_id = self.compile_function(fn_ir);
+                self.compile_make_closure(func_id);
             }
             IrKind::Call(ir) => self.compile_call(*ir.callee, ir.args),
             IrKind::Template(elems) => self.compile_template(elems),
@@ -131,6 +124,17 @@ impl<'a> Compiler<'a> {
                 class_id,
                 method_id,
             } => self.compile_method(*obj, class_id, method_id),
+        }
+    }
+
+    pub fn compile_classes(&mut self, classes: Vec<ClassIr>) {
+        for class in classes {
+            let methods: Vec<_> = class
+                .methods
+                .into_iter()
+                .map(|m| self.compile_function(m))
+                .collect();
+            self.classes.push(vm::Class { methods });
         }
     }
 
@@ -401,8 +405,8 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_function(&mut self, fn_ir: FunctionIr, fn_type: TypeInfo) -> usize {
-        let type_id = self.intern_type(fn_type);
+    fn compile_function(&mut self, fn_ir: FunctionIr) -> FunctionId {
+        let type_id = self.intern_type(fn_ir.ty);
 
         let mut compiler = Compiler::new(self.type_registry, self.predefined_types);
         compiler.base_fn_id = self.functions.len();
@@ -422,7 +426,7 @@ impl<'a> Compiler<'a> {
         let fn_id = self.base_fn_id + self.functions.len();
         self.functions.push(func);
 
-        fn_id
+        FunctionId(fn_id as u32)
     }
 
     fn compile_call(&mut self, callee: Ir, args: Vec<Ir>) {
@@ -464,24 +468,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_type_literal(&mut self, type_info: TypeInfo) {
-        match &type_info {
-            TypeInfo::Class { id } => {
-                let class = &self.classes[*id as usize];
-                let mut function_ids = Vec::with_capacity(class.methods.len());
-                for method in class.methods.clone() {
-                    if let IrKind::Func(func_ir) = method.kind {
-                        let func_id = self.compile_function(func_ir, method.ty);
-                        function_ids.push(FunctionId(func_id));
-                    }
-                }
-                assert_eq!(self.compiled_classes.len(), *id as usize);
-                self.compiled_classes.push(vm::Class {
-                    methods: function_ids,
-                })
-            }
-            _ => {}
-        }
-
         let type_id = self.intern_type(type_info);
         self.append_op(Opcode::PushType, 1);
         self.append_u32(type_id.0 as u32);
@@ -504,9 +490,9 @@ impl<'a> Compiler<'a> {
         self.append_op(Opcode::Unwrap, 0);
     }
 
-    fn compile_make_closure(&mut self, func_id: u32) {
+    fn compile_make_closure(&mut self, func_id: FunctionId) {
         self.append_op(Opcode::MakeClosure, 1);
-        self.append_u32(func_id);
+        self.append_u32(func_id.0);
     }
 
     fn compile_make_object(&mut self, type_info: TypeInfo, class_id: u32, fields: Vec<Ir>) {
@@ -515,10 +501,10 @@ impl<'a> Compiler<'a> {
             self.compile_ir(field);
         }
 
-        let methods = &self.compiled_classes[class_id as usize].methods.clone();
+        let methods = &self.classes[class_id as usize].methods.clone();
         let method_count = methods.len();
         for func_id in methods {
-            self.compile_make_closure(func_id.0 as u32);
+            self.compile_make_closure(*func_id);
         }
 
         let type_id = self.type_registry.intern(type_info);

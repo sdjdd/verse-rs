@@ -101,7 +101,7 @@ pub struct Function {
 }
 
 struct Frame {
-    func_id: usize,
+    func_id: u32,
     stack_base: usize,
     pc: usize,
     captures: Vec<Rc<RefCell<Upvalue>>>,
@@ -140,7 +140,7 @@ impl Vm {
         }
     }
 
-    pub fn run(&mut self, func_id: usize) {
+    pub fn run(&mut self, func_id: u32) {
         self.frames.push(Frame {
             func_id,
             stack_base: self.stack.len(),
@@ -155,7 +155,7 @@ impl Vm {
                 None => break,
             };
 
-            let func = &self.functions[frame.func_id];
+            let func = &self.functions[frame.func_id as usize];
 
             let op = match func.bytecode.get(frame.pc) {
                 Some(byte) => {
@@ -174,7 +174,7 @@ impl Vm {
 
             if self.has_pending_failure {
                 while let Some(frame) = self.frames.last_mut() {
-                    let func = &self.functions[frame.func_id];
+                    let func = &self.functions[frame.func_id as usize];
                     let handler = func.failure_table.iter().find(|ft| {
                         frame.pc >= ft.start_pc as usize && frame.pc < ft.end_pc as usize
                     });
@@ -200,7 +200,7 @@ impl Vm {
 
     fn read_byte(&mut self) -> u8 {
         let frame = self.frames.last_mut().unwrap();
-        let func = &self.functions[frame.func_id];
+        let func = &self.functions[frame.func_id as usize];
         let byte = func.bytecode[frame.pc];
         frame.pc += 1;
         byte
@@ -394,7 +394,7 @@ impl Vm {
         let class_id = self.read_u32() as usize;
         let method_id = self.read_u32() as usize;
         let func_id = self.classes[class_id].methods[method_id];
-        let type_id = self.functions[func_id.0].type_id;
+        let type_id = self.functions[func_id.0 as usize].type_id;
         self.op_stack.push(Value::Method {
             type_id,
             obj: obj.into(),
@@ -674,8 +674,8 @@ impl Vm {
     }
 
     fn exec_make_closure(&mut self) {
-        let func_id = self.read_u32() as usize;
-        let func = &self.functions[func_id];
+        let func_id = self.read_u32();
+        let func = &self.functions[func_id as usize];
         let func_type = func.type_id;
         let upvalues = func.upvalues.clone();
 

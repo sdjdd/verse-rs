@@ -179,7 +179,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             Token::Id if self.peek_n(1) == Token::ColonEq => self.parse_init_expr(),
             Token::Loop => self.parse_loop_expr(),
             Token::Break => self.parse_break_expr(),
-            Token::Type | Token::Tuple | Token::Question | Token::Struct | Token::Class => {
+            Token::Type | Token::Tuple | Token::Question | Token::Struct => {
                 let type_expr = self.parse_type_expr()?;
                 Ok(Expression::new(
                     self.gen_expr_id(),
@@ -187,8 +187,47 @@ impl<'src, 'a> Parser<'src, 'a> {
                     type_expr,
                 ))
             }
+            Token::Class => Ok(self.parse_class_expr()?.into()),
             _ => self.parse_compare_chain_expr(),
         }
+    }
+
+    fn parse_class_expr(&mut self) -> ParseResult<ClassExpr> {
+        self.expect(Token::Class)?;
+        let start = self.span().start;
+        self.expect(Token::Colon)?;
+        self.expect(Token::Newline)?;
+
+        let mut fields = vec![];
+        let mut methods = vec![];
+        self.parse_block_expressions(|p| {
+            if p.looks_like_function_signature() {
+                let func_expr = p.parse_function_expr()?;
+                methods.push(func_expr);
+            } else {
+                let mutable = p.consume_if(Token::Var);
+                let name = p.parse_id_expr()?;
+                p.expect(Token::Colon)?;
+                let ty = p.parse_type_expr()?;
+                let default = if p.consume_if(Token::Eq) {
+                    Some(p.parse_expression()?)
+                } else {
+                    None
+                };
+                let field = ClassField::new(name, ty, default, mutable);
+                fields.push(field);
+            }
+            Ok(())
+        })?;
+
+        let end = self.span().end;
+
+        Ok(ClassExpr::new(
+            self.gen_expr_id(),
+            start..end,
+            fields,
+            methods,
+        ))
     }
 
     fn parse_type_expr(&mut self) -> ParseResult<TypeExpr> {
@@ -250,36 +289,6 @@ impl<'src, 'a> Parser<'src, 'a> {
                             })
                             .collect(),
                     ),
-                })
-            }
-            Token::Class => {
-                self.expect(Token::Colon)?;
-                self.expect(Token::Newline)?;
-                let members = self.parse_block_expressions(|p| {
-                    if p.looks_like_function_signature() {
-                        let func_expr = p.parse_function_expr()?;
-                        Ok(ClassMember::Method(func_expr))
-                    } else {
-                        let mutable = p.consume_if(Token::Var);
-                        let name = p.parse_id_expr()?;
-                        p.expect(Token::Colon)?;
-                        let ty = p.parse_type_expr()?;
-                        let default = if p.consume_if(Token::Eq) {
-                            Some(p.parse_expression()?)
-                        } else {
-                            None
-                        };
-                        Ok(ClassMember::Var {
-                            name,
-                            ty,
-                            default,
-                            mutable,
-                        })
-                    }
-                })?;
-                Ok(TypeExpr {
-                    span: self.span(),
-                    kind: TypeExprKind::Class(members),
                 })
             }
             Token::Id => {
@@ -675,9 +684,9 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(list)
     }
 
-    fn parse_block_expressions<P, E>(&mut self, parse: P) -> ParseResult<Vec<E>>
+    fn parse_block_expressions<P, E>(&mut self, mut parse: P) -> ParseResult<Vec<E>>
     where
-        P: Fn(&mut Self) -> ParseResult<E>,
+        P: FnMut(&mut Self) -> ParseResult<E>,
     {
         self.expect(Token::Indent)?;
         let mut exprs = vec![];

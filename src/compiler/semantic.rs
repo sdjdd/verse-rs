@@ -157,7 +157,15 @@ struct ClassField {
 #[derive(Clone)]
 pub struct ClassInfo {
     fields: OrderMap<Symbol, ClassField>,
-    pub methods: OrderMap<Symbol, Ir>,
+    pub methods: OrderMap<Symbol, FunctionIr>,
+}
+
+impl Into<ClassIr> for ClassInfo {
+    fn into(self) -> ClassIr {
+        ClassIr {
+            methods: self.methods.into_values().collect(),
+        }
+    }
 }
 
 pub struct SemanticAnalyzer<'a> {
@@ -339,6 +347,7 @@ impl<'a> SemanticAnalyzer<'a> {
             ExprKind::Member(expr) => self.lower_member_expr(span, expr),
             ExprKind::Construct(cons_expr) => self.lower_construct_expr(span, cons_expr),
             ExprKind::Query(e) => self.lower_query_expr(span, &e.expr),
+            ExprKind::Class(e) => self.lower_class_expr(e),
         }
     }
 
@@ -864,16 +873,16 @@ impl<'a> SemanticAnalyzer<'a> {
         let func_ir = self.lower_func_expr(expr)?;
         let slot = self.declare(expr.name, func_ir.ty.clone(), false);
         Some(Ir {
-            span: func_ir.span.clone(),
+            span: expr.span.clone(),
             ty: func_ir.ty.clone(),
             kind: IrKind::StoreLocal {
                 slot,
-                value: func_ir.into(),
+                value: Box::new(func_ir.into()),
             },
         })
     }
 
-    fn lower_func_expr(&mut self, expr: &FunctionExpr) -> Option<Ir> {
+    fn lower_func_expr(&mut self, expr: &FunctionExpr) -> Option<FunctionIr> {
         let mut return_type = self.parse_type_expr(&expr.return_type);
         let param_names: Vec<_> = expr.params.iter().map(|p| p.name).collect();
         let param_types: Vec<_> = expr
@@ -921,16 +930,14 @@ impl<'a> SemanticAnalyzer<'a> {
 
         let upvalues = scope.upvalues.into_iter().collect();
 
-        Some(Ir {
+        Some(FunctionIr {
             span: expr.span.clone(),
             ty: type_info,
-            kind: IrKind::Func(FunctionIr {
-                params: param_slots,
-                effects,
-                body: body.into(),
-                return_void,
-                upvalues,
-            }),
+            params: param_slots,
+            effects,
+            body: body.into(),
+            return_void,
+            upvalues,
         })
     }
 
@@ -1278,53 +1285,6 @@ impl<'a> SemanticAnalyzer<'a> {
                 });
                 TypeInfo::Struct { id: struct_id }
             }
-            TypeExprKind::Class(members) => {
-                let mut vars = OrderMap::new();
-                let mut methods = OrderMap::new();
-                for m in members {
-                    match m {
-                        ClassMember::Var {
-                            name,
-                            ty,
-                            default,
-                            mutable,
-                        } => {
-                            let type_info = self.parse_type_expr(ty);
-                            let default_value = if let Some(default) = default {
-                                // TODO: handle None
-                                self.lower_expr(default)
-                            } else {
-                                None
-                            };
-                            vars.insert(
-                                name.symbol,
-                                ClassField {
-                                    type_info,
-                                    default_value,
-                                    mutable: *mutable,
-                                },
-                            );
-                        }
-                        ClassMember::Method(func_expr) => {
-                            // TODO
-                            match self.lower_func_expr(func_expr) {
-                                Some(func_ir) => {
-                                    methods.insert(func_expr.name, func_ir);
-                                }
-                                _ => {
-                                    todo!();
-                                }
-                            }
-                        }
-                    }
-                }
-                let id = self.classes.len() as u32;
-                self.classes.push(ClassInfo {
-                    fields: vars,
-                    methods,
-                });
-                TypeInfo::Class { id }
-            }
             TypeExprKind::Function { params, ret } => TypeInfo::Function {
                 params: params.iter().map(|p| self.parse_type_expr(p)).collect(),
                 ret: self.parse_type_expr(ret).into(),
@@ -1631,6 +1591,39 @@ impl<'a> SemanticAnalyzer<'a> {
                 None
             }
         }
+    }
+
+    fn lower_class_expr(&mut self, expr: &ClassExpr) -> Option<Ir> {
+        let mut fields = OrderMap::new();
+        let mut methods = OrderMap::new();
+
+        for field in expr.fields.iter() {
+            let type_info = self.parse_type_expr(&field.ty);
+            let default_value = field.default.as_ref().map(|e| self.lower_expr(e)).flatten();
+            fields.insert(
+                field.name.symbol,
+                ClassField {
+                    type_info,
+                    default_value,
+                    mutable: field.mutable,
+                },
+            );
+        }
+
+        for method in expr.methods.iter() {
+            let func_expr = self.lower_func_expr(method)?;
+            methods.insert(method.name, func_expr);
+        }
+
+        let id = self.classes.len() as u32;
+        self.classes.push(ClassInfo { fields, methods });
+
+        let type_info = TypeInfo::Type(TypeInfo::Class { id }.into());
+        Some(Ir {
+            span: expr.span.clone(),
+            ty: type_info.clone(),
+            kind: IrKind::Type(type_info),
+        })
     }
 }
 

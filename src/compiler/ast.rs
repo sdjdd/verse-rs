@@ -39,6 +39,7 @@ pub enum ExprKind {
     Member(MemberExpr),
     Construct(ConstructExpr),
     Query(QueryExpr),
+    Class(ClassExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +49,6 @@ pub enum TypeExprKind {
     Tuple(Vec<TypeExpr>),
     Array(Box<TypeExpr>),
     Struct(Vec<StructField>),
-    Class(Vec<ClassMember>),
     Function {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
@@ -61,17 +61,6 @@ pub struct StructField {
     pub name: IdExpr,
     pub ty: TypeExpr,
     pub default: Expression,
-}
-
-#[derive(Debug, Clone)]
-pub enum ClassMember {
-    Var {
-        name: IdExpr,
-        ty: TypeExpr,
-        default: Option<Expression>,
-        mutable: bool,
-    },
-    Method(FunctionExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -284,4 +273,30 @@ pub struct ConstructExpr {
 pub struct QueryExpr {
     #[new(into)]
     pub expr: Box<Expression>,
+}
+
+#[derive(Debug, Clone, new)]
+pub struct ClassField {
+    pub name: IdExpr,
+    pub ty: TypeExpr,
+    pub default: Option<Expression>,
+    pub mutable: bool,
+}
+
+#[derive(Debug, Clone, new)]
+pub struct ClassExpr {
+    pub id: u32,
+    pub span: Span,
+    pub fields: Vec<ClassField>,
+    pub methods: Vec<FunctionExpr>,
+}
+
+impl Into<Expression> for ClassExpr {
+    fn into(self) -> Expression {
+        Expression {
+            id: self.id,
+            span: self.span.clone(),
+            kind: ExprKind::Class(self),
+        }
+    }
 }

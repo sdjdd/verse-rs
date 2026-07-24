@@ -232,9 +232,26 @@ pub struct Effects {
 
 #[derive(Debug, Clone)]
 pub struct FunctionIr {
+    pub span: Span,
+    pub ty: TypeInfo,
     pub params: Vec<Slot>,
     pub effects: Effects,
     pub body: Box<Ir>,
     pub return_void: bool,
     pub upvalues: Vec<UpvalueDesc>,
+}
+
+impl Into<Ir> for FunctionIr {
+    fn into(self) -> Ir {
+        Ir {
+            span: self.span.clone(),
+            ty: self.ty.clone(),
+            kind: IrKind::Func(self),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassIr {
+    pub methods: Vec<FunctionIr>,
 }
